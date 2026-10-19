@@ -51,8 +51,14 @@ defmodule AnonimizedMcp.Masking.Ner do
     "PAYMENT_CARD_SECURITY" => :secret
   }
 
-  @id_types ~w(PERSON_IDENTIFIER BANK_ACCOUNT_IDENTIFIER PAYMENT_CARD ACCOUNT_IDENTIFIER
-               DOCUMENT_IDENTIFIER VEHICLE_IDENTIFIER)
+  # Model types without a specific alias: identifiers become ID, special
+  # categories (health, beliefs, ...) become SENSITIVE.
+  @id_types ~w(PERSON_IDENTIFIER ACCOUNT_IDENTIFIER DOCUMENT_IDENTIFIER VEHICLE_IDENTIFIER
+               DEVICE_IDENTIFIER ORGANIZATION_IDENTIFIER)
+
+  # Types the reference decoder only accepts with at least two digits.
+  @digit_types ~w(PERSON_IDENTIFIER BANK_ACCOUNT_IDENTIFIER PAYMENT_CARD ACCOUNT_IDENTIFIER
+                  DOCUMENT_IDENTIFIER VEHICLE_IDENTIFIER)
 
   @word ~r/[^\s,;|"<>()\[\]{}*^]+/u
   @edges ~r/^[(\[{<"'«„]*(.*?)[)\]}>"'».,;:!?]*$/su
@@ -184,7 +190,8 @@ defmodule AnonimizedMcp.Masking.Ner do
       case Map.fetch(@alias_types, type) do
         _ when type in @kept -> []
         {:ok, alias_type} -> [{s, e - s, alias_type}]
-        :error -> [{s, e - s, "ID"}]
+        :error when type in @id_types -> [{s, e - s, "ID"}]
+        :error -> [{s, e - s, "SENSITIVE"}]
       end
     end)
   end
@@ -193,7 +200,7 @@ defmodule AnonimizedMcp.Masking.Ner do
     scored = for s <- ws..(we - 1)//1, entry = by_start[s], do: entry
 
     with [{_, first_count, first_b} | _] <- scored,
-         {types, count, _} = sum(scored),
+         {types, count} = sum(scored),
          {type, p} = Enum.max_by(types, &elem(&1, 1)),
          true <- p >= count - Enum.sum(Map.values(types)) do
       case spans do
@@ -213,8 +220,8 @@ defmodule AnonimizedMcp.Masking.Ner do
   end
 
   defp sum(entries) do
-    Enum.reduce(entries, {%{}, 0, 0.0}, fn {t, n, b}, {acc, count, bm} ->
-      {Map.merge(acc, t, fn _, x, y -> x + y end), count + n, bm + b}
+    Enum.reduce(entries, {%{}, 0}, fn {t, n, _b}, {acc, count} ->
+      {Map.merge(acc, t, fn _, x, y -> x + y end), count + n}
     end)
   end
 
@@ -251,7 +258,7 @@ defmodule AnonimizedMcp.Masking.Ner do
 
   defp valid?(value, "IDENTIFYING_LINK"), do: Regex.match?(@urlish, value)
   defp valid?(value, "PHONE_NUMBER"), do: digit_count(value) >= 5
-  defp valid?(value, type) when type in @id_types, do: digit_count(value) >= 2
+  defp valid?(value, type) when type in @digit_types, do: digit_count(value) >= 2
   defp valid?(_value, _type), do: true
 
   defp digit_count(value), do: value |> String.replace(~r/\D/, "") |> byte_size()

@@ -47,17 +47,6 @@ defmodule AnonimizedMcp.Sources do
     end
   end
 
-  @doc """
-  Returns the key aliases of `source` are derived from. It comes from the
-  endpoint's `secret_key_base`, so aliases survive restarts and differ
-  between sources without extra configuration.
-  """
-  @spec alias_key(String.t()) :: binary()
-  def alias_key(source) do
-    secret = Application.fetch_env!(:anonimized_mcp, AnonimizedMcpWeb.Endpoint)[:secret_key_base]
-    :crypto.mac(:hmac, :sha256, secret, "anonimized_mcp aliases:" <> source)
-  end
-
   @doc "Returns the connection pool of a source."
   @spec connection(t()) :: GenServer.name()
   def connection(%__MODULE__{name: name}), do: {:via, Registry, {__MODULE__.Registry, name}}

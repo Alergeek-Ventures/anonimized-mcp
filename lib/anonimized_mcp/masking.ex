@@ -39,11 +39,9 @@ defmodule AnonimizedMcp.Masking do
   def scrub(source, text), do: source |> masker([text]) |> apply_masker({:text, text})
 
   defp column_kind(name, type) do
-    name = name |> Macro.underscore() |> String.downcase()
-
     cond do
-      Regex.match?(@secret_name, name) -> :secret
-      Regex.match?(@birth_name, name) -> :birthdate
+      named?(@secret_name, name) -> :secret
+      named?(@birth_name, name) -> :birthdate
       match?({Postgrex.Extensions.UUID, _}, type) -> :uuid
       true -> :plain
     end
@@ -68,13 +66,9 @@ defmodule AnonimizedMcp.Masking do
   end
 
   defp leaf(%{} = map) when not is_struct(map) do
-    Map.new(map, fn {key, value} ->
-      if Regex.match?(
-           @secret_name,
-           key |> to_string() |> Macro.underscore() |> String.downcase()
-         ),
-         do: {key, if(value == nil, do: nil, else: @secret)},
-         else: {key, leaf(value)}
+    Map.new(map, fn
+      {key, nil} -> {key, nil}
+      {key, value} -> {key, if(named?(@secret_name, key), do: @secret, else: leaf(value))}
     end)
   end
 
@@ -83,6 +77,9 @@ defmodule AnonimizedMcp.Masking do
     do: {:number, value}
 
   defp leaf(value), do: plain(value)
+
+  defp named?(regex, name),
+    do: Regex.match?(regex, name |> to_string() |> Macro.underscore() |> String.downcase())
 
   defp plain(%Decimal{} = d), do: Decimal.to_string(d, :normal)
   defp plain(%mod{} = value) when mod in [Date, Time, NaiveDateTime, DateTime], do: value

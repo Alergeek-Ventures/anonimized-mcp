@@ -51,34 +51,12 @@ defmodule AnonimizedMcpWeb.Router do
   scope "/", AnonimizedMcpWeb do
     pipe_through :browser
 
-    ash_authentication_live_session :authenticated_routes do
-      # in each liveview, add one of the following at the top of the module:
-      #
-      # If an authenticated user must be present:
-      # on_mount {AnonimizedMcpWeb.LiveUserAuth, :live_user_required}
-      #
-      # If an authenticated user *may* be present:
-      # on_mount {AnonimizedMcpWeb.LiveUserAuth, :live_user_optional}
-      #
-      # If an authenticated user must *not* be present:
-      # on_mount {AnonimizedMcpWeb.LiveUserAuth, :live_no_user}
-    end
-  end
-
-  scope "/", AnonimizedMcpWeb do
-    pipe_through :browser
-
     get "/", PageController, :home
     auth_routes AuthController, AnonimizedMcp.Accounts.User, path: "/auth"
 
-    sign_out_route AuthController, "/sign-out",
-      overrides: [AnonimizedMcpWeb.AuthOverrides, AshAuthentication.Phoenix.Overrides.Default]
+    sign_out_route AuthController, "/sign-out"
 
     sign_in_route auth_routes_prefix: "/auth",
-                  on_mount: [{AnonimizedMcpWeb.LiveUserAuth, :live_no_user}],
-                  overrides: [
-                    AnonimizedMcpWeb.AuthOverrides,
-                    AshAuthentication.Phoenix.Overrides.Default
-                  ]
+                  on_mount: [{AnonimizedMcpWeb.LiveUserAuth, :live_no_user}]
   end
 end

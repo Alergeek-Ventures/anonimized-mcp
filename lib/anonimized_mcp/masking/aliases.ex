@@ -1,8 +1,9 @@
 defmodule AnonimizedMcp.Masking.Aliases do
   @moduledoc """
-  Stable pseudonyms for personal values. An alias is a keyed HMAC of the
-  trimmed value, so the same entity gets the same alias in every response and
-  after a restart. The alias-to-value map stays in this node's memory: it lets
+  Stable pseudonyms for personal values. An alias is an HMAC of the trimmed
+  value under a per-source key derived from the endpoint's
+  `secret_key_base`, so the same entity gets the same alias in every
+  response and after a restart, with nothing extra to configure. The alias-to-value map stays in this node's memory: it lets
   agents use aliases in later queries and value checks without seeing values.
   """
 
@@ -25,10 +26,9 @@ defmodule AnonimizedMcp.Masking.Aliases do
   @spec alias_for(String.t(), String.t(), String.t()) :: String.t()
   def alias_for(source, type, value) do
     canonical = canonical(type, value)
-    key = AnonimizedMcp.Sources.alias_key(source)
 
     alias =
-      :crypto.mac(:hmac, :sha256, key, type <> ":" <> canonical)
+      :crypto.mac(:hmac, :sha256, key(source), type <> ":" <> canonical)
       |> Base.encode32(case: :lower, padding: false)
       |> binary_part(0, 8)
       |> then(&"#{type}_#{&1}")
@@ -67,6 +67,11 @@ defmodule AnonimizedMcp.Masking.Aliases do
   @doc "Regex matching any alias token."
   @spec pattern() :: Regex.t()
   def pattern, do: ~r/\b[A-Z][A-Z_]*_[a-z2-7]{8}\b/
+
+  defp key(source) do
+    secret = Application.fetch_env!(:anonimized_mcp, AnonimizedMcpWeb.Endpoint)[:secret_key_base]
+    :crypto.mac(:hmac, :sha256, secret, "anonimized_mcp aliases:" <> source)
+  end
 
   defp canonical("EMAIL", value), do: value |> String.trim() |> String.downcase()
   defp canonical(_type, value), do: String.trim(value)
