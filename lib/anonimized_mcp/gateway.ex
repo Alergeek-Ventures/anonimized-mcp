@@ -1,0 +1,253 @@
+defmodule AnonimizedMcp.Gateway do
+  @moduledoc """
+  The agent-facing operations: list sources, describe a schema, run a
+  read-only query and check properties of an aliased value. Every result,
+  including database errors, leaves through masking; nothing here raises with
+  data in the message.
+
+  A query runs as one autocommit statement capped at `limit + 1` rows, and the
+  connection returns to the pool before masking starts, so no transaction is
+  held while results are processed.
+  """
+
+  alias AnonimizedMcp.Gateway.{Lineage, Literals}
+  alias AnonimizedMcp.Masking
+  alias AnonimizedMcp.Masking.{Aliases, Dictionary, Identifiers, Policy}
+  alias AnonimizedMcp.Sources
+  alias AnonimizedMcp.Sources.Catalog
+
+  @max_limit 500
+
+  # Planner statistics hold sample values of every readable column.
+  @blocked_relations ~w(pg_stats pg_statistic pg_stats_ext pg_stats_ext_exprs pg_statistic_ext_data)
+
+  @doc "Lists the configured sources."
+  @spec list_sources() :: [%{name: String.t(), description: String.t()}]
+  def list_sources, do: Enum.map(Sources.all(), &Map.take(&1, [:name, :description]))
+
+  @doc "Describes all tables of a source, or the columns of one table."
+  @spec describe(String.t(), String.t() | nil, boolean()) :: {:ok, map()} | {:error, String.t()}
+  def describe(source_name, table \\ nil, refresh? \\ false) do
+    with {:ok, source} <- Sources.fetch(source_name),
+         {:ok, catalog} <- catalog(source, refresh?) do
+      case table do
+        nil ->
+          {:ok,
+           %{
+             tables:
+               catalog
+               |> Enum.sort()
+               |> Enum.map(fn {name, t} ->
+                 %{
+                   name: name,
+                   estimated_rows: t.estimated_rows,
+                   columns: Enum.map(t.columns, & &1.name)
+                 }
+               end)
+           }}
+
+        table ->
+          name = if String.contains?(table, "."), do: table, else: "public." <> table
+
+          case Map.fetch(catalog, name) do
+            {:ok, t} ->
+              {:ok,
+               %{
+                 name: name,
+                 estimated_rows: t.estimated_rows,
+                 foreign_keys: t.foreign_keys,
+                 columns:
+                   Enum.map(t.columns, fn c ->
+                     masking =
+                       case Policy.classify(source, name, c.name, c.type) do
+                         :plain -> "none"
+                         :secret -> "secret"
+                         {:pii, type} -> "alias:#{type}"
+                       end
+
+                     Map.put(c, :masking, masking)
+                   end)
+               }}
+
+            :error ->
+              {:error,
+               "Unknown table #{inspect(table)}. Call describe_schema without a table to list them."}
+          end
+      end
+    end
+  end
+
+  @doc "Runs a read-only SELECT or EXPLAIN and returns the masked result."
+  @spec query(String.t(), String.t(), pos_integer()) :: {:ok, map()} | {:error, String.t()}
+  def query(source_name, sql, limit \\ 100) do
+    limit = limit |> max(1) |> min(@max_limit)
+    sql = sql |> String.trim() |> String.trim_trailing(";")
+
+    with {:ok, source} <- Sources.fetch(source_name),
+         {:ok, catalog} <- catalog(source, false),
+         {:ok, statement} <- parse(sql),
+         {:ok, rewritten, params} <- Literals.substitute(sql, source.name) do
+      :ok = Dictionary.ensure_loaded(source, catalog)
+      started = System.monotonic_time(:millisecond)
+
+      case execute(source, statement, rewritten, params, limit) do
+        {:ok, query, result} ->
+          rows = Enum.take(result.rows, limit)
+          outputs = Lineage.outputs(statement, catalog)
+
+          {columns, rows} =
+            Masking.mask(source, catalog, query.columns, query.result_types, rows, outputs)
+
+          {:ok,
+           %{
+             columns: columns,
+             rows: rows,
+             row_count: length(rows),
+             truncated: length(result.rows) > limit,
+             elapsed_ms: System.monotonic_time(:millisecond) - started
+           }}
+
+        {:error, error} ->
+          {:error, database_error(source.name, error, byte_size(rewritten) - byte_size(sql))}
+      end
+    end
+  end
+
+  @doc """
+  Reports properties of the value behind `alias` (whitespace, length,
+  character classes, checksums) and, with `compare_with`, how it relates to
+  another aliased value. The value itself is never returned.
+  """
+  @spec check_value(String.t(), String.t(), String.t() | nil) ::
+          {:ok, map()} | {:error, String.t()}
+  def check_value(source_name, alias, compare_with \\ nil) do
+    with {:ok, source} <- Sources.fetch(source_name),
+         {:ok, entry} <- lookup(source.name, alias),
+         {:ok, other} <- if(compare_with, do: lookup(source.name, compare_with), else: {:ok, nil}) do
+      value = entry.canonical
+
+      properties = %{
+        type: entry.type,
+        length: String.length(value),
+        byte_size: byte_size(value),
+        ascii_only: String.match?(value, ~r/^[\x20-\x7E]*$/),
+        digits_only: String.match?(value, ~r/^\d+$/),
+        contains_whitespace: String.match?(value, ~r/\s/u),
+        contains_double_space: String.contains?(value, "  "),
+        contains_control_or_invisible:
+          String.match?(value, ~r/[\p{C}\x{00A0}\x{200B}-\x{200D}\x{FEFF}]/u),
+        uppercase_letters: String.match?(value, ~r/\p{Lu}/u),
+        lowercase_letters: String.match?(value, ~r/\p{Ll}/u),
+        unicode_nfc_normalized: value == String.normalize(value, :nfc),
+        valid_nip: Identifiers.nip?(String.replace(value, "-", "")),
+        valid_pesel: Identifiers.pesel?(value),
+        valid_regon: Identifiers.regon?(value),
+        valid_iban: Identifiers.iban?(value),
+        valid_email: String.match?(value, ~r/^[^@\s]+@[^@\s]+\.[^@\s]+$/)
+      }
+
+      comparison =
+        if other do
+          norm =
+            &(&1 |> String.normalize(:nfc) |> String.downcase() |> String.replace(~r/[\s-]/u, ""))
+
+          %{
+            compared_with: compare_with,
+            equal: value == other.canonical,
+            equal_ignoring_case: String.downcase(value) == String.downcase(other.canonical),
+            equal_ignoring_case_whitespace_and_dashes: norm.(value) == norm.(other.canonical),
+            one_contains_the_other:
+              String.contains?(value, other.canonical) or String.contains?(other.canonical, value)
+          }
+        end
+
+      {:ok,
+       %{
+         alias: alias,
+         note:
+           "Aliases strip surrounding whitespace; it is shown around the alias in query results.",
+         properties: properties,
+         comparison: comparison
+       }}
+    end
+  end
+
+  defp lookup(source, alias) do
+    case Aliases.lookup(source, alias) do
+      {:ok, entry} -> {:ok, entry}
+      :error -> {:error, "Unknown alias #{inspect(alias)} for source #{inspect(source)}."}
+    end
+  end
+
+  defp catalog(source, refresh?) do
+    case Catalog.get(source, refresh?) do
+      {:ok, catalog} -> {:ok, catalog}
+      {:error, error} -> {:error, database_error(source.name, error, 0)}
+    end
+  end
+
+  defp parse(sql) do
+    case PgQuery.parse(sql) do
+      {:ok, %{stmts: [%{stmt: %PgQuery.Node{node: {kind, _}} = statement}]}}
+      when kind in [:select_stmt, :explain_stmt] ->
+        case Enum.find(relations(statement, []), &(&1 in @blocked_relations)) do
+          nil -> {:ok, statement}
+          name -> {:error, "#{name} exposes sample column values and is not available."}
+        end
+
+      {:ok, %{stmts: [_]}} ->
+        {:error, "Only SELECT and EXPLAIN statements are allowed."}
+
+      {:ok, %{stmts: _}} ->
+        {:error, "Send exactly one statement."}
+
+      {:error, %{message: message, cursorpos: position}} ->
+        {:error, "Syntax error at position #{position}: #{message}"}
+    end
+  end
+
+  defp relations(%PgQuery.RangeVar{relname: name}, acc), do: [name | acc]
+
+  defp relations(%_{} = struct, acc),
+    do: struct |> Map.from_struct() |> Map.values() |> relations(acc)
+
+  defp relations({_tag, value}, acc), do: relations(value, acc)
+  defp relations(list, acc) when is_list(list), do: Enum.reduce(list, acc, &relations/2)
+  defp relations(_other, acc), do: acc
+
+  defp execute(source, %PgQuery.Node{node: {:select_stmt, _}}, sql, params, limit) do
+    wrapped = "SELECT * FROM (\n#{sql}\n) AS anonimized_mcp_query LIMIT #{limit + 1}"
+    Postgrex.prepare_execute(Sources.connection(source), "", wrapped, params)
+  end
+
+  defp execute(source, _explain, sql, params, _limit),
+    do: Postgrex.prepare_execute(Sources.connection(source), "", sql, params)
+
+  # Data exceptions (class 22) quote the offending input; drop the quotes.
+  defp database_error(
+         source,
+         %Postgrex.Error{postgres: %{code: code, pg_code: pg_code} = pg},
+         shift
+       ) do
+    message =
+      if String.starts_with?(pg_code, "22"),
+        do: String.replace(pg.message, ~r/"[^"]*"|'[^']*'/, "<value>"),
+        else: Masking.scrub(source, pg.message)
+
+    position =
+      case pg[:position] do
+        nil ->
+          ""
+
+        pos ->
+          " at position #{max(String.to_integer(to_string(pos)) - byte_size("SELECT * FROM (\n") - shift, 1)}"
+      end
+
+    "Database error #{pg_code} (#{code})#{position}: #{message}"
+  end
+
+  defp database_error(_source, %DBConnection.ConnectionError{}, _shift),
+    do: "The database is unreachable or the query timed out."
+
+  defp database_error(_source, _error, _shift), do: "The query failed."
+end
