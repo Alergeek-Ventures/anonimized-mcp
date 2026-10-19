@@ -26,6 +26,26 @@ defmodule AnonimizedMcp.MaskingTest do
              "record 1b4e28ba-2fa1-11d2-883f-0016d3cca427 at 2026-10-18T09:12:44Z, 1230.00 PLN"
   end
 
+  test "masks profile links and international phone numbers" do
+    for text <- [
+          "https://github.com/someone",
+          "https://www.linkedin.com/in/some-one-123/",
+          "linkedin.com/in/someone",
+          "+48 600 12 34 56",
+          "+1 (555) 123-4567",
+          "+420 12 345 67 89",
+          "+48600123456",
+          "60 123-45-67"
+        ] do
+      assert [{0, len, type}] = Patterns.spans(text), text
+      assert len == byte_size(String.trim_trailing(text, "/")) or len == byte_size(text), text
+      assert type in ["PROFILE", "PHONE"], text
+    end
+
+    assert [] = Patterns.spans("https://github.com")
+    assert [] = Patterns.spans("version 1.2.3 released 2026-10-19, order +5 items")
+  end
+
   test "digit patterns need a valid checksum" do
     assert [{0, 11, "PESEL"}] = Patterns.spans("44051401359")
     assert [] = Patterns.spans("44051401358")
