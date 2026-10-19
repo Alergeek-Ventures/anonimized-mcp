@@ -23,6 +23,10 @@ uv run python run.py bardsai corpus.jsonl     # regex, bardsai, nym, gliner2-pl-
 uv run python score.py regex+bardsai bonsai-2b-PQ2_0 --corpus corpus.jsonl --leaks 20
 ```
 
+`mix run bench/gateway.exs corpus.jsonl` (from the repository root) writes
+predictions of the gateway's own Elixir detection as `gateway`, so it can be
+scored next to the Python adapters.
+
 `a+b` scores the union of two detectors. A gold span leaks unless every letter
 and digit in it is masked. UUIDs and ISO timestamps are never masked
 (`--no-guard` disables that).

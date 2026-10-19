@@ -1,30 +1,22 @@
 defmodule AnonimizedMcp.Sources do
   @moduledoc """
-  Configured databases agents can debug. Each source has its own small
-  connection pool. The connection is read-only at session level, but the
-  database role must be read-only too; the session settings are only a
-  second line of defence.
+  Configured databases agents can debug. A source needs only a URL; each has
+  its own small connection pool. The connection is read-only at session
+  level, but the database role must be read-only too; the session settings
+  are only a second line of defence.
 
       config :anonimized_mcp, :sources, %{
         "app" => [
-          description: "Production database of App",
           url: "postgres://debug_reader:...@host/app",
-          alias_key: "secret used to derive aliases",
-          columns: %{"organizations.name" => {:pii, "COMPANY"}, "jobs.payload" => :secret}
+          description: "Production database of App"
         ]
       }
   """
 
-  @enforce_keys [:name, :description, :url, :alias_key]
-  defstruct [:name, :description, :url, :alias_key, columns: %{}]
+  @enforce_keys [:name, :url]
+  defstruct [:name, :url, description: ""]
 
-  @type t :: %__MODULE__{
-          name: String.t(),
-          description: String.t(),
-          url: String.t(),
-          alias_key: String.t(),
-          columns: %{String.t() => AnonimizedMcp.Masking.Policy.kind()}
-        }
+  @type t :: %__MODULE__{name: String.t(), url: String.t(), description: String.t()}
 
   @session_parameters [
     default_transaction_read_only: "on",
@@ -55,11 +47,15 @@ defmodule AnonimizedMcp.Sources do
     end
   end
 
-  @doc "Returns the source called `name` or raises."
-  @spec fetch!(String.t()) :: t()
-  def fetch!(name) do
-    {:ok, source} = fetch(name)
-    source
+  @doc """
+  Returns the key aliases of `source` are derived from. It comes from the
+  endpoint's `secret_key_base`, so aliases survive restarts and differ
+  between sources without extra configuration.
+  """
+  @spec alias_key(String.t()) :: binary()
+  def alias_key(source) do
+    secret = Application.fetch_env!(:anonimized_mcp, AnonimizedMcpWeb.Endpoint)[:secret_key_base]
+    :crypto.mac(:hmac, :sha256, secret, "anonimized_mcp aliases:" <> source)
   end
 
   @doc "Returns the connection pool of a source."

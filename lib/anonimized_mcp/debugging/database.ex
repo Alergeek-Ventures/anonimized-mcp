@@ -13,7 +13,10 @@ defmodule AnonimizedMcp.Debugging.Database do
   Personal data is replaced by stable aliases such as NAME_k3j9x2ab or TAX_ID_q7m2c4ze: the same \
   value always gets the same alias, so aliases can be joined, grouped and compared across \
   responses. Whitespace around a value is kept around its alias. Secrets show as [secret]. \
-  Ids, amounts, states, timestamps and technical text are returned as stored.\
+  Ids, amounts, states, timestamps and technical text are returned as stored. Masking is done \
+  by a model and can miss something: if a cell still shows a person's name, contact details, \
+  an identifier or a credential, call report_leak with the query_id, row and column, and do not \
+  repeat the value anywhere.\
   """
 
   actions do
@@ -26,7 +29,7 @@ defmodule AnonimizedMcp.Debugging.Database do
       description """
       Describe a source's schema. Without `table`, lists every readable table with its columns \
       and estimated row count. With `table` (e.g. "users" or "oban.oban_jobs"), returns column \
-      types, foreign keys and how each column is masked.
+      types, nullability and foreign keys.
       """
 
       argument :source, :string, allow_nil?: false
@@ -86,6 +89,38 @@ defmodule AnonimizedMcp.Debugging.Database do
       run fn input, _context ->
         args = input.arguments
         respond(Gateway.check_value(args.source, args.alias, args[:compare_with]))
+      end
+    end
+
+    action :report_leak, :map do
+      description """
+      Report a cell of an earlier query result that still shows personal data or a credential \
+      masking missed. Point at it with query_id, row (zero-based) and column; never quote the \
+      value, the gateway copies the cell itself.
+      """
+
+      argument :source, :string, allow_nil?: false
+      argument :query_id, :string, allow_nil?: false
+      argument :row, :integer, allow_nil?: false, constraints: [min: 0]
+      argument :column, :string, allow_nil?: false
+
+      argument :note, :string,
+        description:
+          "What kind of data it is (e.g. \"surname in a declined form\"), not the value."
+
+      run fn input, context ->
+        args = input.arguments
+
+        respond(
+          Gateway.report_leak(
+            args.source,
+            args.query_id,
+            args.row,
+            args.column,
+            args[:note],
+            context.actor
+          )
+        )
       end
     end
   end

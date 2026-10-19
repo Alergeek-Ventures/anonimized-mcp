@@ -44,7 +44,7 @@ defmodule AnonimizedMcpWeb.Router do
     pipe_through :mcp
 
     forward "/", AshAi.Mcp.Router,
-      tools: [:list_sources, :describe_schema, :query, :check_value],
+      tools: [:list_sources, :describe_schema, :query, :check_value, :report_leak],
       otp_app: :anonimized_mcp
   end
 

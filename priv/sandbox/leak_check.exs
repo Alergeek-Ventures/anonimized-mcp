@@ -5,8 +5,8 @@
 #     mix run priv/sandbox/seed.exs && mix run priv/sandbox/leak_check.exs
 #
 # With COLD=1 every query starts with a fresh alias map, as if it were the
-# agent's first: only the preloaded dictionary of personal columns helps free
-# text, not values seen in earlier responses. NO_DICTIONARY=1 also skips that.
+# agent's first: values masked in earlier responses no longer help to find
+# the same values elsewhere.
 
 alias AnonimizedMcp.Gateway
 
@@ -57,13 +57,7 @@ bypasses = [
 
 results =
   for {label, sql} <- dumps ++ debugging ++ bypasses do
-    if System.get_env("COLD") == "1" do
-      :ets.delete_all_objects(AnonimizedMcp.Masking.Aliases)
-
-      if System.get_env("NO_DICTIONARY") == "1",
-        do: :persistent_term.put({AnonimizedMcp.Masking.Dictionary, source}, System.monotonic_time(:millisecond)),
-        else: :persistent_term.erase({AnonimizedMcp.Masking.Dictionary, source})
-    end
+    if System.get_env("COLD") == "1", do: :ets.delete_all_objects(AnonimizedMcp.Masking.Aliases)
 
     text =
       case Gateway.query(source, sql, 500) do

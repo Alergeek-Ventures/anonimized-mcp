@@ -1,8 +1,8 @@
 defmodule AnonimizedMcp.Sources.Catalog do
   @moduledoc """
   Tables, columns and foreign keys a source's role can read, cached for a few
-  minutes. Masking needs the column order to resolve `*`, and agents need the
-  schema to write queries.
+  minutes, so agents can find their way around without querying
+  `information_schema` themselves.
   """
 
   alias AnonimizedMcp.Sources

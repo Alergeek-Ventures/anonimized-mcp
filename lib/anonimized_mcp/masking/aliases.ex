@@ -25,7 +25,7 @@ defmodule AnonimizedMcp.Masking.Aliases do
   @spec alias_for(String.t(), String.t(), String.t()) :: String.t()
   def alias_for(source, type, value) do
     canonical = canonical(type, value)
-    key = AnonimizedMcp.Sources.fetch!(source).alias_key
+    key = AnonimizedMcp.Sources.alias_key(source)
 
     alias =
       :crypto.mac(:hmac, :sha256, key, type <> ":" <> canonical)

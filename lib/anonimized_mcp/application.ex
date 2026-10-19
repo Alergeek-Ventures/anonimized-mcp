@@ -14,7 +14,9 @@ defmodule AnonimizedMcp.Application do
         AnonimizedMcp.Repo,
         {DNSCluster, query: Application.get_env(:anonimized_mcp, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: AnonimizedMcp.PubSub},
-        AnonimizedMcp.Masking.Aliases
+        AnonimizedMcp.Masking.Aliases,
+        AnonimizedMcp.Masking.Ner,
+        AnonimizedMcp.Gateway.Results
       ] ++
         AnonimizedMcp.Sources.child_specs() ++
         [

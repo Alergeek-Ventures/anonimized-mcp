@@ -10,9 +10,11 @@ defmodule AnonimizedMcp.Debugging do
     tool :describe_schema, AnonimizedMcp.Debugging.Database, :describe_schema
     tool :query, AnonimizedMcp.Debugging.Database, :query
     tool :check_value, AnonimizedMcp.Debugging.Database, :check_value
+    tool :report_leak, AnonimizedMcp.Debugging.Database, :report_leak
   end
 
   resources do
     resource AnonimizedMcp.Debugging.Database
+    resource AnonimizedMcp.Debugging.LeakReport
   end
 end

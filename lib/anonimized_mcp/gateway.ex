@@ -1,22 +1,24 @@
 defmodule AnonimizedMcp.Gateway do
   @moduledoc """
   The agent-facing operations: list sources, describe a schema, run a
-  read-only query and check properties of an aliased value. Every result,
-  including database errors, leaves through masking; nothing here raises with
-  data in the message.
+  read-only query, check properties of an aliased value and report a cell
+  that masking missed. Every result, including database errors, leaves
+  through masking; nothing here raises with data in the message.
 
   A query runs as one autocommit statement capped at `limit + 1` rows, and the
   connection returns to the pool before masking starts, so no transaction is
   held while results are processed.
   """
 
-  alias AnonimizedMcp.Gateway.{Lineage, Literals}
+  alias AnonimizedMcp.Debugging.LeakReport
+  alias AnonimizedMcp.Gateway.{Literals, Results}
   alias AnonimizedMcp.Masking
-  alias AnonimizedMcp.Masking.{Aliases, Dictionary, Identifiers, Policy}
+  alias AnonimizedMcp.Masking.{Aliases, Identifiers}
   alias AnonimizedMcp.Sources
   alias AnonimizedMcp.Sources.Catalog
 
   @max_limit 500
+  @select_prefix "SELECT * FROM (\n"
 
   # Planner statistics hold sample values of every readable column.
   @blocked_relations ~w(pg_stats pg_statistic pg_stats_ext pg_stats_ext_exprs pg_statistic_ext_data)
@@ -32,42 +34,25 @@ defmodule AnonimizedMcp.Gateway do
          {:ok, catalog} <- catalog(source, refresh?) do
       case table do
         nil ->
-          {:ok,
-           %{
-             tables:
-               catalog
-               |> Enum.sort()
-               |> Enum.map(fn {name, t} ->
-                 %{
-                   name: name,
-                   estimated_rows: t.estimated_rows,
-                   columns: Enum.map(t.columns, & &1.name)
-                 }
-               end)
-           }}
+          tables =
+            catalog
+            |> Enum.sort()
+            |> Enum.map(fn {name, t} ->
+              %{
+                name: name,
+                estimated_rows: t.estimated_rows,
+                columns: Enum.map(t.columns, & &1.name)
+              }
+            end)
+
+          {:ok, %{tables: tables}}
 
         table ->
           name = if String.contains?(table, "."), do: table, else: "public." <> table
 
           case Map.fetch(catalog, name) do
             {:ok, t} ->
-              {:ok,
-               %{
-                 name: name,
-                 estimated_rows: t.estimated_rows,
-                 foreign_keys: t.foreign_keys,
-                 columns:
-                   Enum.map(t.columns, fn c ->
-                     masking =
-                       case Policy.classify(source, name, c.name, c.type) do
-                         :plain -> "none"
-                         :secret -> "secret"
-                         {:pii, type} -> "alias:#{type}"
-                       end
-
-                     Map.put(c, :masking, masking)
-                   end)
-               }}
+              {:ok, Map.put(t, :name, name)}
 
             :error ->
               {:error,
@@ -84,23 +69,26 @@ defmodule AnonimizedMcp.Gateway do
     sql = sql |> String.trim() |> String.trim_trailing(";")
 
     with {:ok, source} <- Sources.fetch(source_name),
-         {:ok, catalog} <- catalog(source, false),
          {:ok, statement} <- parse(sql),
          {:ok, rewritten, params} <- Literals.substitute(sql, source.name) do
-      :ok = Dictionary.ensure_loaded(source, catalog)
       started = System.monotonic_time(:millisecond)
 
       case execute(source, statement, rewritten, params, limit) do
         {:ok, query, result} ->
-          rows = Enum.take(result.rows, limit)
-          outputs = Lineage.outputs(statement, catalog)
+          rows =
+            Masking.mask(
+              source.name,
+              query.columns,
+              query.result_types,
+              Enum.take(result.rows, limit)
+            )
 
-          {columns, rows} =
-            Masking.mask(source, catalog, query.columns, query.result_types, rows, outputs)
+          query_id = Results.put(%{source: source.name, columns: query.columns, rows: rows})
 
           {:ok,
            %{
-             columns: columns,
+             query_id: query_id,
+             columns: query.columns,
              rows: rows,
              row_count: length(rows),
              truncated: length(result.rows) > limit,
@@ -108,7 +96,10 @@ defmodule AnonimizedMcp.Gateway do
            }}
 
         {:error, error} ->
-          {:error, database_error(source.name, error, byte_size(rewritten) - byte_size(sql))}
+          # Error positions refer to the executed text; map them back to the agent's SQL.
+          wrapper = if select?(statement), do: byte_size(@select_prefix), else: 0
+          shift = wrapper + byte_size(rewritten) - byte_size(sql)
+          {:error, database_error(source.name, error, shift)}
       end
     end
   end
@@ -172,6 +163,38 @@ defmodule AnonimizedMcp.Gateway do
     end
   end
 
+  @doc """
+  Records that a cell of an earlier result still shows personal data. The
+  cell is taken from the stored result, so the agent never has to repeat it.
+  """
+  @spec report_leak(
+          String.t(),
+          String.t(),
+          non_neg_integer(),
+          String.t(),
+          String.t() | nil,
+          map() | nil
+        ) ::
+          {:ok, map()} | {:error, String.t()}
+  def report_leak(source_name, query_id, row, column, note, reporter) do
+    with {:ok, source} <- Sources.fetch(source_name),
+         {:ok, cell} <- Results.cell(source.name, query_id, row, column) do
+      LeakReport
+      |> Ash.Changeset.for_create(:report, %{
+        source: source.name,
+        query_id: query_id,
+        row: row,
+        column: column,
+        cell: %{"value" => cell},
+        note: note,
+        reporter_id: reporter && reporter.id
+      })
+      |> Ash.create!(authorize?: false)
+
+      {:ok, %{reported: true}}
+    end
+  end
+
   defp lookup(source, alias) do
     case Aliases.lookup(source, alias) do
       {:ok, entry} -> {:ok, entry}
@@ -215,13 +238,16 @@ defmodule AnonimizedMcp.Gateway do
   defp relations(list, acc) when is_list(list), do: Enum.reduce(list, acc, &relations/2)
   defp relations(_other, acc), do: acc
 
-  defp execute(source, %PgQuery.Node{node: {:select_stmt, _}}, sql, params, limit) do
-    wrapped = "SELECT * FROM (\n#{sql}\n) AS anonimized_mcp_query LIMIT #{limit + 1}"
-    Postgrex.prepare_execute(Sources.connection(source), "", wrapped, params)
+  defp execute(source, statement, sql, params, limit) do
+    sql =
+      if select?(statement),
+        do: "#{@select_prefix}#{sql}\n) AS anonimized_mcp_query LIMIT #{limit + 1}",
+        else: sql
+
+    Postgrex.prepare_execute(Sources.connection(source), "", sql, params)
   end
 
-  defp execute(source, _explain, sql, params, _limit),
-    do: Postgrex.prepare_execute(Sources.connection(source), "", sql, params)
+  defp select?(statement), do: match?(%PgQuery.Node{node: {:select_stmt, _}}, statement)
 
   # Data exceptions (class 22) quote the offending input; drop the quotes.
   defp database_error(
@@ -240,7 +266,7 @@ defmodule AnonimizedMcp.Gateway do
           ""
 
         pos ->
-          " at position #{max(String.to_integer(to_string(pos)) - byte_size("SELECT * FROM (\n") - shift, 1)}"
+          " at position #{max(String.to_integer(to_string(pos)) - shift, 1)}"
       end
 
     "Database error #{pg_code} (#{code})#{position}: #{message}"

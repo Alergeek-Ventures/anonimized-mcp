@@ -10,6 +10,9 @@
     jq
     gcc
     gnumake
+    # Ortex builds its ONNX Runtime NIF from source.
+    cargo
+    rustc
     glibcLocales
     inotify-tools
   ];

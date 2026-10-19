@@ -18,7 +18,7 @@ def snapshot(repo):
     return str(next((HUB / f"models--{repo.replace('/', '--')}" / "snapshots").iterdir()))
 
 
-# --- deterministic baseline (mirrors lib/anonimized_mcp/masking/detectors.ex) ---
+# --- deterministic baseline (mirrored by lib/anonimized_mcp/masking/patterns.ex) ---
 
 EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}(?![\w-])")
 JWT = re.compile(r"\beyJ[\w-]+\.[\w-]+\.[\w-]+")

@@ -86,12 +86,6 @@ config :anonimized_mcp, :sources, %{
   "sandbox" => [
     description:
       "Synthetic invoicing app: organizations, users, counterparties, invoices, bank sync, Oban jobs.",
-    url: "postgres://debug_reader:debug_reader@localhost:5455/sandbox",
-    alias_key: "dev-only-alias-key",
-    columns: %{
-      "organizations.name" => {:pii, "COMPANY"},
-      "counterparties.display_name" => {:pii, "NAME"},
-      "sales_invoices.buyer_display_name" => {:pii, "NAME"}
-    }
+    url: "postgres://debug_reader:debug_reader@localhost:5455/sandbox"
   ]
 }
