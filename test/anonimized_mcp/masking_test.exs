@@ -62,6 +62,11 @@ defmodule AnonimizedMcp.MaskingTest do
     assert note =~ ~r/^Kontakt: #{name}, tel\. PHONE_[a-z2-7]{8}\. Płaci po terminie\.$/
   end
 
+  test "finds names written in capitals only" do
+    assert [[name]] = mask(["name"], [["JAN KOWALSKI"]])
+    assert name =~ ~r/^NAME_[a-z2-7]{8}$/
+  end
+
   test "keeps whitespace around a masked value visible" do
     assert [[masked]] = mask(["tax_id"], [["5260250274 "]])
     assert masked =~ ~r/^TAX_ID_[a-z2-7]{8} $/

@@ -143,12 +143,23 @@ defmodule AnonimizedMcp.Masking do
   @spec spans([String.t()]) :: [[{non_neg_integer(), pos_integer(), String.t() | :secret}]]
   def spans(texts) do
     prose = Enum.filter(texts, &String.match?(&1, ~r/\p{L}/u))
-    names = prose |> Enum.zip(Ner.spans(prose)) |> Map.new()
+    names = prose |> Enum.zip(prose |> Enum.map(&model_case/1) |> Ner.spans()) |> Map.new()
 
     Enum.map(texts, fn text ->
       names = outside_record_ids(text, Map.get(names, text, []))
       merge(Patterns.spans(text) ++ names)
     end)
+  end
+
+  # The model relies on capitals, so text written in capitals only
+  # ("JAN KOWALSKI") is shown to it in title case. Offsets must not move, so
+  # this only happens when the byte size stays the same.
+  defp model_case(text) do
+    titled = Regex.replace(~r/\p{L}+/u, text, &String.capitalize/1)
+
+    if not String.match?(text, ~r/\p{Ll}/u) and byte_size(titled) == byte_size(text),
+      do: titled,
+      else: text
   end
 
   defp merge(spans) do
