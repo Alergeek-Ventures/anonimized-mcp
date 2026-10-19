@@ -23,6 +23,9 @@ defmodule AnonimizedMcp.Gateway do
   # Planner statistics hold sample values of every readable column.
   @blocked_relations ~w(pg_stats pg_statistic pg_stats_ext pg_stats_ext_exprs pg_statistic_ext_data)
 
+  # Reversed text is still personal data, but no detector recognises it.
+  @blocked_functions ~w(reverse)
+
   @doc "Lists the configured sources."
   @spec list_sources() :: [%{name: String.t(), description: String.t()}]
   def list_sources, do: Enum.map(Sources.all(), &Map.take(&1, [:name, :description]))
@@ -213,9 +216,15 @@ defmodule AnonimizedMcp.Gateway do
     case PgQuery.parse(sql) do
       {:ok, %{stmts: [%{stmt: %PgQuery.Node{node: {kind, _}} = statement}]}}
       when kind in [:select_stmt, :explain_stmt] ->
-        case Enum.find(relations(statement, []), &(&1 in @blocked_relations)) do
-          nil -> {:ok, statement}
-          name -> {:error, "#{name} exposes sample column values and is not available."}
+        case Enum.find(references(statement, []), &blocked?/1) do
+          nil ->
+            {:ok, statement}
+
+          {:relation, name} ->
+            {:error, "#{name} exposes sample column values and is not available."}
+
+          {:function, name} ->
+            {:error, "#{name}() hides values from masking and is not available."}
         end
 
       {:ok, %{stmts: [_]}} ->
@@ -229,14 +238,23 @@ defmodule AnonimizedMcp.Gateway do
     end
   end
 
-  defp relations(%PgQuery.RangeVar{relname: name}, acc), do: [name | acc]
+  defp blocked?({:relation, name}), do: name in @blocked_relations
+  defp blocked?({:function, name}), do: name in @blocked_functions
 
-  defp relations(%_{} = struct, acc),
-    do: struct |> Map.from_struct() |> Map.values() |> relations(acc)
+  defp references(%PgQuery.RangeVar{relname: name}, acc), do: [{:relation, name} | acc]
 
-  defp relations({_tag, value}, acc), do: relations(value, acc)
-  defp relations(list, acc) when is_list(list), do: Enum.reduce(list, acc, &relations/2)
-  defp relations(_other, acc), do: acc
+  # The last part of a possibly schema-qualified name (pg_catalog.reverse).
+  defp references(%PgQuery.FuncCall{funcname: funcname} = call, acc) do
+    %PgQuery.Node{node: {:string, %{sval: name}}} = List.last(funcname)
+    call |> Map.from_struct() |> Map.values() |> references([{:function, name} | acc])
+  end
+
+  defp references(%_{} = struct, acc),
+    do: struct |> Map.from_struct() |> Map.values() |> references(acc)
+
+  defp references({_tag, value}, acc), do: references(value, acc)
+  defp references(list, acc) when is_list(list), do: Enum.reduce(list, acc, &references/2)
+  defp references(_other, acc), do: acc
 
   defp execute(source, statement, sql, params, limit) do
     sql =

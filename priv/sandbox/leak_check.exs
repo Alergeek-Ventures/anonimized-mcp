@@ -44,6 +44,7 @@ bypasses = [
   {"case", "SELECT CASE WHEN true THEN name END FROM users"},
   {"substring", "SELECT substring(email from 1 for 6) FROM users"},
   {"reverse", "SELECT reverse(name) FROM users"},
+  {"qualified reverse", "SELECT pg_catalog.REVERSE(name) FROM users"},
   {"format", "SELECT format('%s|%s', name, phone) FROM users"},
   {"translate", "SELECT translate(name, 'aeiou', 'AEIOU') FROM users"},
   {"cast error", "SELECT name::int FROM users"},

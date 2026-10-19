@@ -27,8 +27,9 @@ bound as a parameter inside the gateway and never appears in SQL text.
 ## How masking works
 
 1. `pg_query` parses the statement; only one `SELECT` or `EXPLAIN` is
-   accepted, and `pg_stats`-like relations are refused. The database role
-   must be read-only regardless.
+   accepted; `pg_stats`-like relations and `reverse()`, which hides names
+   from every detector, are refused. The database role must be read-only
+   regardless.
 2. Every text value, including strings inside JSON and arrays, goes through
    checksum-validated patterns (NIP, PESEL, REGON, IBAN/NRB, e-mail, phone,
    IP, password hashes, JWTs, random tokens) and the
