@@ -11,7 +11,7 @@ defmodule AnonimizedMcp.Gateway do
   """
 
   alias AnonimizedMcp.Debugging.LeakReport
-  alias AnonimizedMcp.Gateway.{Literals, Results}
+  alias AnonimizedMcp.Gateway.{Literals, Results, Statement}
   alias AnonimizedMcp.Masking
   alias AnonimizedMcp.Masking.{Aliases, Identifiers}
   alias AnonimizedMcp.Sources
@@ -19,12 +19,6 @@ defmodule AnonimizedMcp.Gateway do
 
   @max_limit 500
   @select_prefix "SELECT * FROM (\n"
-
-  # Planner statistics hold sample values of every readable column.
-  @blocked_relations ~w(pg_stats pg_statistic pg_stats_ext pg_stats_ext_exprs pg_statistic_ext_data)
-
-  # Reversed text is still personal data, but no detector recognises it.
-  @blocked_functions ~w(reverse)
 
   @doc "Lists the configured sources."
   @spec list_sources() :: [%{name: String.t(), description: String.t()}]
@@ -72,7 +66,7 @@ defmodule AnonimizedMcp.Gateway do
     sql = sql |> String.trim() |> String.trim_trailing(";")
 
     with {:ok, source} <- Sources.fetch(source_name),
-         {:ok, statement} <- parse(sql),
+         {:ok, statement} <- Statement.parse(sql),
          {:ok, rewritten, params} <- Literals.substitute(sql, source.name) do
       started = System.monotonic_time(:millisecond)
 
@@ -100,7 +94,7 @@ defmodule AnonimizedMcp.Gateway do
 
         {:error, error} ->
           # Error positions refer to the executed text; map them back to the agent's SQL.
-          wrapper = if select?(statement), do: byte_size(@select_prefix), else: 0
+          wrapper = if Statement.select?(statement), do: byte_size(@select_prefix), else: 0
           shift = wrapper + byte_size(rewritten) - byte_size(sql)
           {:error, database_error(source.name, error, shift)}
       end
@@ -212,60 +206,14 @@ defmodule AnonimizedMcp.Gateway do
     end
   end
 
-  defp parse(sql) do
-    case PgQuery.parse(sql) do
-      {:ok, %{stmts: [%{stmt: %PgQuery.Node{node: {kind, _}} = statement}]}}
-      when kind in [:select_stmt, :explain_stmt] ->
-        case Enum.find(references(statement, []), &blocked?/1) do
-          nil ->
-            {:ok, statement}
-
-          {:relation, name} ->
-            {:error, "#{name} exposes sample column values and is not available."}
-
-          {:function, name} ->
-            {:error, "#{name}() hides values from masking and is not available."}
-        end
-
-      {:ok, %{stmts: [_]}} ->
-        {:error, "Only SELECT and EXPLAIN statements are allowed."}
-
-      {:ok, %{stmts: _}} ->
-        {:error, "Send exactly one statement."}
-
-      {:error, %{message: message, cursorpos: position}} ->
-        {:error, "Syntax error at position #{position}: #{message}"}
-    end
-  end
-
-  defp blocked?({:relation, name}), do: name in @blocked_relations
-  defp blocked?({:function, name}), do: name in @blocked_functions
-
-  defp references(%PgQuery.RangeVar{relname: name}, acc), do: [{:relation, name} | acc]
-
-  # The last part of a possibly schema-qualified name (pg_catalog.reverse).
-  defp references(%PgQuery.FuncCall{funcname: funcname} = call, acc) do
-    %PgQuery.Node{node: {:string, %{sval: name}}} = List.last(funcname)
-    call |> Map.from_struct() |> Map.values() |> references([{:function, name} | acc])
-  end
-
-  defp references(%_{} = struct, acc),
-    do: struct |> Map.from_struct() |> Map.values() |> references(acc)
-
-  defp references({_tag, value}, acc), do: references(value, acc)
-  defp references(list, acc) when is_list(list), do: Enum.reduce(list, acc, &references/2)
-  defp references(_other, acc), do: acc
-
   defp execute(source, statement, sql, params, limit) do
     sql =
-      if select?(statement),
+      if Statement.select?(statement),
         do: "#{@select_prefix}#{sql}\n) AS anonimized_mcp_query LIMIT #{limit + 1}",
         else: sql
 
     Postgrex.prepare_execute(Sources.connection(source), "", sql, params)
   end
-
-  defp select?(statement), do: match?(%PgQuery.Node{node: {:select_stmt, _}}, statement)
 
   # Data exceptions (class 22) quote the offending input; drop the quotes.
   defp database_error(

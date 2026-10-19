@@ -45,6 +45,8 @@ bypasses = [
   {"substring", "SELECT substring(email from 1 for 6) FROM users"},
   {"reverse", "SELECT reverse(name) FROM users"},
   {"qualified reverse", "SELECT pg_catalog.REVERSE(name) FROM users"},
+  {"base64", "SELECT encode(convert_to(name, 'UTF8'), 'base64') FROM users"},
+  {"bytea cast", "SELECT name::bytea FROM users"},
   {"format", "SELECT format('%s|%s', name, phone) FROM users"},
   {"translate", "SELECT translate(name, 'aeiou', 'AEIOU') FROM users"},
   {"cast error", "SELECT name::int FROM users"},

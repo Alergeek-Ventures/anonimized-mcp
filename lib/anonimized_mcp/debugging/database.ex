@@ -57,7 +57,10 @@ defmodule AnonimizedMcp.Debugging.Database do
       To filter by a masked value, write its alias inside a string literal: \
       `WHERE email = 'EMAIL_k3j9x2ab'`, `WHERE tax_id LIKE 'TAX_ID_q7m2c4ze%'`. The alias is \
       swapped for the real value inside the database only. Results are limited to `limit` rows \
-      (default 100, max 500); `truncated` tells whether more exist. Queries time out after 15s.
+      (default 100, max 500); `truncated` tells whether more exist. Queries time out after 15s. \
+      Functions are allowlisted: aggregates, window, date/time, JSON, array, numeric and text \
+      functions that keep values recognisable (lower, trim, substring, concat, ...); others, \
+      such as reverse or encode, and casts to bytea are refused.
       """
 
       argument :source, :string, allow_nil?: false
