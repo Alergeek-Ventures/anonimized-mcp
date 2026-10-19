@@ -31,7 +31,9 @@ bound as a parameter inside the gateway and never appears in SQL text.
    allowlisted (aggregates, window, date/time, JSON, arrays, numbers, and
    text functions that return parts of their input unchanged); anything
    that could rewrite a name past the detectors, such as `reverse`,
-   `translate` or `encode`, and casts to `bytea` are refused
+   `translate` or `encode`, and casts to `bytea` are refused; case changes
+   (`lower`, `upper`, `initcap`), which weaken detection, may filter and
+   sort but not appear in a select list
    (`lib/anonimized_mcp/gateway/statement.ex`). The database role must be
    read-only regardless.
 2. Every text value, including strings inside JSON and arrays, goes through

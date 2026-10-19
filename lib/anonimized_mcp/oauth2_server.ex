@@ -29,5 +29,7 @@ defmodule AnonimizedMcp.Oauth2Server do
     # kept for backwards compatibility. Set to `false` if your auth
     # server is for a fixed set of first-party clients only.
     cimd_enabled?: true,
-    sign_in_path: "/sign-in"
+    sign_in_path: "/sign-in",
+    access_token_lifetime:
+      Application.compile_env(:anonimized_mcp, :oauth2_access_token_lifetime, {1, :hour})
 end

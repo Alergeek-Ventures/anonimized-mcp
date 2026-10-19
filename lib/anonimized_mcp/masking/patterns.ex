@@ -16,7 +16,7 @@ defmodule AnonimizedMcp.Masking.Patterns do
     {:secret, ~r/\beyJ[\w-]+\.[\w-]+\.[\w-]+/, nil},
     {:secret, ~r/\$(?:argon2(?:id|i|d)|2[aby])\$[^\s"'}]+/, nil},
     {"IBAN",
-     ~r/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,4})?\b|\b\d{2}(?: ?\d{4}){6}\b/,
+     ~r/\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){3,7}(?: ?[A-Z0-9]{1,4})?\b|\b\d{2}(?: ?\d{4}){6}\b/i,
      :iban},
     {"PESEL", ~r/(?<![\w-])\d{11}(?![\w-])/, :pesel},
     {"TAX_ID",
@@ -26,7 +26,8 @@ defmodule AnonimizedMcp.Masking.Patterns do
     {"IP", ~r/\b(?:\d{1,3}\.){3}\d{1,3}\b/, :ipv4},
     {"IP", ~r/(?<![\w:])(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}(?![\w:])/, nil},
     {"PHONE", ~r/(?<!\w)(?:\+\d{2} ?)?(?:\(?\d{3}\)?[ -]?\d{3}[ -]?\d{3,4})(?:x\d+)?(?!\w)/, nil},
-    # Random tokens mix cases and digits; UUIDs are record ids, not secrets.
+    # Random tokens mix cases and digits; single-case runs are mostly hashes,
+    # module names and ids that debugging needs. UUIDs are record ids too.
     {:secret,
      ~r/(?<![\w$\/.+=-])(?=[\w+=-]*\d)(?=[\w+=-]*[a-z])(?=[\w+=-]*[A-Z])[\w+=-]{24,}(?![\w$\/.+=-])/,
      :not_uuid}

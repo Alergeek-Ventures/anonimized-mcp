@@ -31,7 +31,7 @@ defmodule AnonimizedMcp.Gateway.Statement do
     array_append array_prepend array_cat array_remove array_to_string string_to_array unnest
     generate_series generate_subscripts
     abs round ceil ceiling floor trunc mod sign div power sqrt ln log exp width_bucket to_number
-    lower upper btrim ltrim rtrim length char_length character_length octet_length bit_length
+    lower upper initcap btrim ltrim rtrim length char_length character_length octet_length bit_length
     substring substr left right split_part concat concat_ws format position strpos starts_with
     lpad rpad regexp_like regexp_count regexp_match regexp_matches regexp_substr
     gen_random_uuid pg_typeof num_nulls num_nonnulls
@@ -41,20 +41,30 @@ defmodule AnonimizedMcp.Gateway.Statement do
 
   @json_prefixes ["json_", "jsonb_"]
 
+  # Case changes weaken detection (the model relies on capitals, token
+  # patterns on mixed case), so they may filter, join and sort but not shape
+  # what a query returns.
+  @case_functions ~w(lower upper initcap)
+
   @doc "Parses `sql` and returns the statement if the gateway may run it."
   @spec parse(String.t()) :: {:ok, PgQuery.Node.t()} | {:error, String.t()}
   def parse(sql) do
     case PgQuery.parse(sql) do
       {:ok, %{stmts: [%{stmt: %PgQuery.Node{node: {kind, _}} = statement}]}}
       when kind in [:select_stmt, :explain_stmt] ->
-        case statement |> references([]) |> Enum.reverse() |> Enum.find(&refused?/1) do
+        case statement |> references([], :input) |> Enum.reverse() |> Enum.find(&refused?/1) do
           nil ->
             {:ok, statement}
 
           {:relation, name} ->
             {:error, "#{name} exposes sample column values and is not available."}
 
-          {:function, name} ->
+          {:function, name, :output} when name in @case_functions ->
+            {:error,
+             "#{name}() is not available in the select list, where it would weaken masking; " <>
+               "use it in WHERE, JOIN, GROUP BY or ORDER BY."}
+
+          {:function, name, _context} ->
             {:error,
              "#{name}() is not available: only functions that keep values recognisable to " <>
                "masking are allowed. Allowed: #{Enum.join(Enum.sort(@allowed_functions), ", ")}, " <>
@@ -82,35 +92,59 @@ defmodule AnonimizedMcp.Gateway.Statement do
   defp refused?({:relation, name}), do: name in @blocked_relations
   defp refused?({:cast, type}), do: type == "bytea"
 
-  defp refused?({:function, name}),
-    do: name not in @allowed_functions and not String.starts_with?(name, @json_prefixes)
+  defp refused?({:function, name, context}) do
+    (name not in @allowed_functions and not String.starts_with?(name, @json_prefixes)) or
+      (context == :output and name in @case_functions)
+  end
 
-  defp references(%PgQuery.RangeVar{relname: name}, acc), do: [{:relation, name} | acc]
+  # `context` is `:output` inside a select list, at any depth, since a
+  # subquery's columns can become the result.
+  defp references(%PgQuery.RangeVar{relname: name}, acc, _context), do: [{:relation, name} | acc]
+
+  defp references(%PgQuery.SelectStmt{target_list: targets} = select, acc, context) do
+    acc = references(targets, acc, :output)
+
+    select
+    |> Map.from_struct()
+    |> Map.delete(:target_list)
+    |> Map.values()
+    |> references(acc, context)
+  end
 
   # Built-in functions may be qualified with pg_catalog; any other schema is
   # application code, which the gateway cannot vouch for.
-  defp references(%PgQuery.FuncCall{funcname: funcname} = call, acc) do
-    reference =
+  defp references(%PgQuery.FuncCall{funcname: funcname} = call, acc, context) do
+    name =
       case Enum.map(funcname, &name/1) do
-        [name] -> {:function, name}
-        ["pg_catalog", name] -> {:function, name}
-        parts -> {:function, Enum.join(parts, ".")}
+        [name] -> name
+        ["pg_catalog", name] -> name
+        parts -> Enum.join(parts, ".")
       end
 
-    call |> Map.from_struct() |> Map.values() |> references([reference | acc])
+    call
+    |> Map.from_struct()
+    |> Map.values()
+    |> references([{:function, name, context} | acc], context)
   end
 
-  defp references(%PgQuery.TypeCast{type_name: %PgQuery.TypeName{names: names}} = cast, acc) do
+  defp references(
+         %PgQuery.TypeCast{type_name: %PgQuery.TypeName{names: names}} = cast,
+         acc,
+         context
+       ) do
     reference = {:cast, names |> List.last() |> name()}
-    cast |> Map.from_struct() |> Map.values() |> references([reference | acc])
+    cast |> Map.from_struct() |> Map.values() |> references([reference | acc], context)
   end
 
-  defp references(%_{} = struct, acc),
-    do: struct |> Map.from_struct() |> Map.values() |> references(acc)
+  defp references(%_{} = struct, acc, context),
+    do: struct |> Map.from_struct() |> Map.values() |> references(acc, context)
 
-  defp references({_tag, value}, acc), do: references(value, acc)
-  defp references(list, acc) when is_list(list), do: Enum.reduce(list, acc, &references/2)
-  defp references(_other, acc), do: acc
+  defp references({_tag, value}, acc, context), do: references(value, acc, context)
+
+  defp references(list, acc, context) when is_list(list),
+    do: Enum.reduce(list, acc, &references(&1, &2, context))
+
+  defp references(_other, acc, _context), do: acc
 
   defp name(%PgQuery.Node{node: {:string, %PgQuery.String{sval: name}}}), do: name
 end

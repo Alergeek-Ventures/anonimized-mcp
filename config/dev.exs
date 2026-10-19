@@ -60,7 +60,9 @@ config :anonimized_mcp,
   token_signing_secret: "fi0iVoS5xhGTTBc3IkUMevlweECZE59S",
   oauth2_issuer_url: "http://localhost:4000",
   oauth2_resource_url: "http://localhost:4000/mcp",
-  oauth2_signing_secret: "xTziVHhxwzzCAzCZww3HTaW/OIaa08yVbEkv9690n5c"
+  oauth2_signing_secret: "xTziVHhxwzzCAzCZww3HTaW/OIaa08yVbEkv9690n5c",
+  # Long enough for an unattended agent run overnight.
+  oauth2_access_token_lifetime: {24, :hour}
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

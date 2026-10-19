@@ -60,7 +60,8 @@ defmodule AnonimizedMcp.Debugging.Database do
       (default 100, max 500); `truncated` tells whether more exist. Queries time out after 15s. \
       Functions are allowlisted: aggregates, window, date/time, JSON, array, numeric and text \
       functions that keep values recognisable (lower, trim, substring, concat, ...); others, \
-      such as reverse or encode, and casts to bytea are refused.
+      such as reverse or encode, and casts to bytea are refused. lower, upper and initcap \
+      work in WHERE, JOIN, GROUP BY and ORDER BY but not in the select list.
       """
 
       argument :source, :string, allow_nil?: false

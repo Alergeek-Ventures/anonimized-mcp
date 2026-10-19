@@ -13,10 +13,12 @@ defmodule AnonimizedMcp.Gateway.StatementTest do
           "SELECT state, count(*) FROM oban.oban_jobs GROUP BY state",
           "SELECT date_trunc('day', inserted_at), max(attempt) FROM oban.oban_jobs GROUP BY 1",
           "SELECT args->>'id', jsonb_array_length(errors) FROM oban.oban_jobs",
-          "SELECT lower(trim(email)), length(name), substring(name FROM 1 FOR 3) FROM users",
+          "SELECT trim(email), length(name), substring(name FROM 1 FOR 3) FROM users",
+          "SELECT id FROM users WHERE lower(email) = 'x' ORDER BY upper(name)",
+          "SELECT u.id FROM users u JOIN contacts c ON lower(c.email) = lower(u.email)",
           "SELECT extract(year FROM issue_date), coalesce(note, '-') FROM sales_invoices",
           "SELECT inserted_at AT TIME ZONE 'Europe/Warsaw', id::text FROM users",
-          "SELECT row_number() OVER (ORDER BY id), pg_catalog.upper(name) FROM users",
+          "SELECT row_number() OVER (ORDER BY id), pg_catalog.length(name) FROM users",
           "SELECT d FROM generate_series(now() - interval '1 day', now(), interval '1 hour') d",
           "EXPLAIN SELECT * FROM users WHERE lower(email) = 'x'"
         ] do
@@ -31,6 +33,16 @@ defmodule AnonimizedMcp.Gateway.StatementTest do
 
     assert refused("SELECT (SELECT encode(convert_to(name, 'UTF8'), 'base64')) FROM users") =~
              "encode()"
+  end
+
+  test "allows case changes only outside the select list" do
+    assert refused("SELECT lower(email) FROM users") =~
+             "lower() is not available in the select list"
+
+    assert refused("SELECT x FROM (SELECT upper(name) AS x FROM users) q") =~ "upper()"
+
+    assert refused("WITH c AS (SELECT initcap(name) AS n FROM users) SELECT n FROM c") =~
+             "initcap()"
   end
 
   test "refuses functions from application schemas" do
