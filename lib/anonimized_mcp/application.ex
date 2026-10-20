@@ -16,7 +16,8 @@ defmodule AnonimizedMcp.Application do
         {Phoenix.PubSub, name: AnonimizedMcp.PubSub},
         AnonimizedMcp.Masking.Aliases,
         AnonimizedMcp.Masking.Ner,
-        AnonimizedMcp.Gateway.Results
+        AnonimizedMcp.Gateway.Results,
+        {AnonimizedMcpWeb.RateLimit, clean_period: :timer.minutes(10)}
       ] ++
         AnonimizedMcp.Sources.child_specs() ++
         [

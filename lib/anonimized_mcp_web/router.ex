@@ -17,6 +17,7 @@ defmodule AnonimizedMcpWeb.Router do
 
   pipeline :oauth_api do
     plug :accepts, ["json"]
+    plug AnonimizedMcpWeb.OauthRateLimit
   end
 
   pipeline :mcp do

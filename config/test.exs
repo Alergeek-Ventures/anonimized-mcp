@@ -1,6 +1,12 @@
 import Config
 config :anonimized_mcp, token_signing_secret: "RyA99TZngCS1Hfbf0GI9p3DV4fDveAQy"
 config :bcrypt_elixir, log_rounds: 1
+
+# Small OAuth limits keep the rate-limit tests short.
+config :anonimized_mcp, AnonimizedMcpWeb.OauthRateLimit,
+  register: {5, :timer.hours(1)},
+  other: {5, :timer.minutes(1)}
+
 config :ash, policies: [show_policy_breakdowns?: true], disable_async?: true
 
 # Configure your database

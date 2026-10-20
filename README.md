@@ -87,10 +87,17 @@ With a restrictive umask, run `chmod -R a+rX local/init` before the first
 token rotation) served by `ash_authentication_oauth2_server`. Sign in as
 `dev@alergeek.ventures` / `dev-password-123` (created by
 `priv/repo/seeds.exs`; outside dev and test it requires `OPERATOR_PASSWORD`).
-Self-registration is disabled. Client registration stays open for MCP
-clients but is bounded: OAuth request bodies are capped at 64 kB, client
-names at 200 characters, redirect URIs at 10 of 2048 characters, and
-registered clients that no operator approved are removed after a day.
+Self-registration is disabled. After 5 failed sign-ins for an email within
+5 minutes, further attempts for it are refused until the window passes, even
+with the correct password. Sign-in attempts are recorded in `auth_audit_log`
+(email, outcome, IP truncated to /24 or /48, no passwords or tokens) and kept
+for 30 days. Client registration stays open for MCP clients but is bounded:
+OAuth request bodies are capped at 64 kB, client names at 200 characters,
+redirect URIs at 10 of 2048 characters, and registered clients that no
+operator approved are removed after a day. Each client IP may register 10
+clients an hour and make 60 other OAuth requests a minute; past that the
+server answers 429. The limits count `remote_ip`, so behind a reverse proxy
+the client address must first be taken from the proxy's header.
 
 Aliases are an HMAC keyed by `secret_key_base`. The development value is
 public, so set `SECRET_KEY_BASE` (`mix phx.gen.secret`) before adding a source
