@@ -4,8 +4,11 @@ defmodule AnonimizedMcp.Gateway.StatementTest do
   alias AnonimizedMcp.Gateway.Statement
 
   # Column and field names of the source, as Catalog.names/1 returns them.
-  @names MapSet.new(~w(id name email state inserted_at attempt args errors issue_date note
-                       full_name pid application_name address city key value))
+  @names %{
+    columns: MapSet.new(~w(id name email state inserted_at attempt args errors issue_date note
+                    full_name pid application_name address city key value)),
+    functions: MapSet.new(~w(count lower reverse md5 pg_advisory_lock pg_cancel_backend))
+  }
 
   defp parse(sql), do: Statement.parse(sql, @names)
 
@@ -48,7 +51,9 @@ defmodule AnonimizedMcp.Gateway.StatementTest do
           "SELECT (p.full_name).reverse FROM people p",
           "SELECT (42::bigint).pg_advisory_lock AS locked",
           "SELECT (pid).pg_cancel_backend FROM pg_stat_activity WHERE application_name = 'x'",
-          "SELECT id FROM people p WHERE (p.full_name).md5 = 'x'"
+          "SELECT id FROM people p WHERE (p.full_name).md5 = 'x'",
+          "SELECT (42::bigint).pg_advisory_lock, 1 AS pg_advisory_lock",
+          "SELECT q.reverse FROM (SELECT full_name AS x FROM people) q(reverse)"
         ] do
       assert refused(sql) =~ "would call", sql
     end

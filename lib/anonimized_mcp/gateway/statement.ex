@@ -51,13 +51,15 @@ defmodule AnonimizedMcp.Gateway.Statement do
   @doc """
   Parses `sql` and returns the statement if the gateway may run it.
 
-  `names` are the column and field names of the source. PostgreSQL reads
-  `x.name` and `(x).name` as the call `name(x)` when `x` has no such field,
-  so a trailing name that is neither a known name nor an allowed function is
-  refused.
+  `names` are the column and function names of the source
+  (`AnonimizedMcp.Sources.Catalog.names/1`). PostgreSQL reads `x.name` and
+  `(x).name` as the call `name(x)` when `x` has no such field, so a trailing
+  name must be a column of the source, a name the statement gives to a
+  column (unless a function has that name too), or an allowed function.
   """
-  @spec parse(String.t(), MapSet.t(String.t())) :: {:ok, PgQuery.Node.t()} | {:error, String.t()}
-  def parse(sql, names \\ MapSet.new()) do
+  @spec parse(String.t(), %{columns: MapSet.t(), functions: MapSet.t()}) ::
+          {:ok, PgQuery.Node.t()} | {:error, String.t()}
+  def parse(sql, names \\ %{columns: MapSet.new(), functions: MapSet.new()}) do
     case PgQuery.parse(sql) do
       # EXPLAIN ANALYZE runs the explained statement.
       {:ok,
@@ -76,7 +78,12 @@ defmodule AnonimizedMcp.Gateway.Statement do
       {:ok, %{stmts: [%{stmt: %PgQuery.Node{node: {kind, _}} = statement}]}}
       when kind in [:select_stmt, :explain_stmt] ->
         references = statement |> references([], :input) |> Enum.reverse()
-        names = for {:name, name} <- references, into: names, do: name
+        # A name the statement defines cannot vouch for a function's name.
+        names =
+          for {:name, name} <- references,
+              not MapSet.member?(names.functions, name),
+              into: names.columns,
+              do: name
 
         case Enum.find(references, &refused?(&1, names)) do
           nil ->

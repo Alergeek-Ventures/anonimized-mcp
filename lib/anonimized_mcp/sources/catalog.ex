@@ -36,21 +36,26 @@ defmodule AnonimizedMcp.Sources.Catalog do
     AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   """
 
-  # Every name `x.name` or `(x).name` can select: columns of tables, views and
-  # composite types (system catalogs included) and output fields of functions.
+  # Every name `x.name` or `(x).name` can select (columns of tables, views and
+  # composite types, system catalogs included, and output fields of
+  # functions), and every function name.
   @names_sql """
-  SELECT a.attname::text FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+  SELECT 'column', a.attname::text FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
   WHERE NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'c')
   UNION
-  SELECT u.name FROM pg_proc p, unnest(p.proargnames, p.proargmodes) AS u(name, mode)
+  SELECT 'column', u.name FROM pg_proc p, unnest(p.proargnames, p.proargmodes) AS u(name, mode)
   WHERE u.mode IN ('o', 'b', 't') AND u.name <> ''
+  UNION
+  SELECT 'function', proname::text FROM pg_proc
   """
 
+  @type names :: %{columns: MapSet.t(String.t()), functions: MapSet.t(String.t())}
+
   @doc """
-  Returns the names a field selection can refer to in `source`, so the
-  gateway can tell `alias.column` from attribute notation calling a function.
+  Returns the column and function names of `source`, so the gateway can tell
+  `alias.column` from attribute notation calling a function.
   """
-  @spec names(Sources.t()) :: {:ok, MapSet.t(String.t())} | {:error, Postgrex.Error.t()}
+  @spec names(Sources.t()) :: {:ok, names()} | {:error, Postgrex.Error.t()}
   def names(%Sources{name: name} = source) do
     now = System.monotonic_time(:millisecond)
 
@@ -60,7 +65,16 @@ defmodule AnonimizedMcp.Sources.Catalog do
 
       _ ->
         with {:ok, result} <- Postgrex.query(Sources.connection(source), @names_sql, []) do
-          names = MapSet.new(result.rows, &hd/1)
+          names =
+            Enum.reduce(
+              result.rows,
+              %{columns: MapSet.new(), functions: MapSet.new()},
+              fn
+                ["column", n], acc -> Map.update!(acc, :columns, &MapSet.put(&1, n))
+                ["function", n], acc -> Map.update!(acc, :functions, &MapSet.put(&1, n))
+              end
+            )
+
           :persistent_term.put({__MODULE__, name, :names}, {now, names})
           {:ok, names}
         end
