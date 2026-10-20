@@ -85,6 +85,15 @@ defmodule AnonimizedMcp.MaskingTest do
     assert note =~ ~r/^Kontakt: #{name}, tel\. PHONE_[a-z2-7]{8}\. Płaci po terminie\.$/
   end
 
+  test "keeps currency and country codes readable, also as JSON keys" do
+    codes = ~w(AED HUF RON MAD ZAR JOD XAU PL SA)
+
+    assert [[^codes, rates]] =
+             mask(["codes", "rates"], [[codes, Map.new(codes, &{&1, "1.5"})]], [@text, @json])
+
+    assert Map.keys(rates) |> Enum.sort() == Enum.sort(codes)
+  end
+
   test "finds names written in capitals only" do
     assert [[name]] = mask(["name"], [["JAN KOWALSKI"]])
     assert name =~ ~r/^NAME_[a-z2-7]{8}$/

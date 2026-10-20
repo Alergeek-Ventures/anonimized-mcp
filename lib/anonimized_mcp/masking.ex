@@ -320,7 +320,14 @@ defmodule AnonimizedMcp.Masking do
   """
   @spec spans([String.t()]) :: [[{non_neg_integer(), pos_integer(), String.t() | :secret}]]
   def spans(texts) do
-    prose = Enum.filter(texts, &String.match?(&1, ~r/\p{L}/u))
+    # A lone word of up to three capitals is a code (ZAR, HUF, PL), which the
+    # model can take for a name or company; patterns still look at it.
+    prose =
+      Enum.filter(
+        texts,
+        &(String.match?(&1, ~r/\p{L}/u) and not String.match?(&1, ~r/^\s*\p{Lu}{1,3}\s*$/u))
+      )
+
     model = Enum.map(prose, &model_case/1)
 
     # Words in capitals inside lower-case text ("odbiór: KOZŁOWSKA") get a
