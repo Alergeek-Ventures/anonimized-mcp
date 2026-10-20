@@ -49,6 +49,16 @@ defmodule AnonimizedMcp.MaskingTest do
     assert [] = Patterns.spans("version 1.2.3 released 2026-10-19, order +5 items")
   end
 
+  test "masks EU VAT numbers by country prefix and length" do
+    for text <-
+          ~w(SE559460010701 DE123456789 FR12345678901 NL123456789B01 ATU12345678 CHE-123.456.789) do
+      assert [{0, len, "TAX_ID"}] = Patterns.spans(text), text
+      assert len == byte_size(text), text
+    end
+
+    assert [] = Patterns.spans("DE12345 SE1234 version FR2")
+  end
+
   test "digit patterns need a valid checksum" do
     assert [{0, 11, "PESEL"}] = Patterns.spans("44051401359")
     assert [] = Patterns.spans("44051401358")
