@@ -1,0 +1,23 @@
+# Secret scanning for CI (.github/workflows/secrets.yml) and local runs:
+#     betterleaks git .
+[extend]
+useDefault = true
+
+# Values that are public on purpose: development and test keys, local
+# database passwords, test fixtures and the SHA-256 of the NER model.
+[[allowlists]]
+description = "Public development values and fixtures"
+regexes = [
+  '''^5UYw2rTWPoY2tCk8Q16nCY8yxp\+ZcZvBUNaUlAS6AbkDJJS5o03auhV2bpiD5JPd$''',
+  '''^609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f$''',
+  '''^7dLmaOgJTD0Ijd21wITrsPJi/l2pdJh6uy0FwpDLCCU6nL2tgjZOdnX4xpv8DNJj$''',
+  '''^RyA99TZngCS1Hfbf0GI9p3DV4fDveAQy$''',
+  '''^SECRET$''',
+  '''^debug_reader$''',
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.dozjgNryP4J3jVmNHl0w5N$''',
+  '''^fi0iVoS5xhGTTBc3IkUMevlweECZE59S$''',
+  '''^postgres$''',
+  '''^short$''',
+  '''^sk_live_Ab12Cd34Ef56Gh78Ij90Kl12$''',
+  '''^xTziVHhxwzzCAzCZww3HTaW/OIaa08yVbEkv9690n5c$''',
+]
