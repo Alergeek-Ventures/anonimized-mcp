@@ -27,7 +27,11 @@ config :anonimized_mcp, AnonimizedMcpWeb.Endpoint,
   debug_errors: true,
   # Also keys the HMAC of aliases: set your own SECRET_KEY_BASE before pointing a
   # source at real data, or anyone can recompute aliases from this public value.
-  secret_key_base: System.get_env("SECRET_KEY_BASE", "7dLmaOgJTD0Ijd21wITrsPJi/l2pdJh6uy0FwpDLCCU6nL2tgjZOdnX4xpv8DNJj"),
+  secret_key_base:
+    System.get_env(
+      "SECRET_KEY_BASE",
+      "7dLmaOgJTD0Ijd21wITrsPJi/l2pdJh6uy0FwpDLCCU6nL2tgjZOdnX4xpv8DNJj"
+    ),
   watchers: [
     esbuild: {Esbuild, :install_and_run, [:anonimized_mcp, ~w(--sourcemap=inline --watch)]},
     tailwind: {Tailwind, :install_and_run, [:anonimized_mcp, ~w(--watch)]}
