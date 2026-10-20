@@ -2,18 +2,24 @@ defmodule AnonimizedMcp.Masking do
   @moduledoc """
   Turns a raw query result into one that is safe to hand to an external
   agent, without knowing anything about the schema. Every text value,
-  including strings inside JSON and arrays, goes through checksum-validated
-  patterns and a local NER model; what they find becomes a stable alias such
-  as `NAME_k3j7x2ab`, or `[secret]` for credentials. Values already aliased in
-  this source are then replaced wherever else they appear, also in declined
-  forms of names, so a name the model caught once stays masked elsewhere.
+  including strings inside JSON and arrays, JSON keys, IP addresses and
+  search lexemes, goes through checksum-validated patterns and a local NER
+  model; what they find becomes a stable alias such as `NAME_k3j7x2ab`, or
+  `[secret]` for credentials. Values already aliased in this source are then
+  replaced wherever else they appear, in any capitalisation and also in
+  declined forms of names, so a name the model caught once stays masked
+  elsewhere.
 
-  Two column-name rules need no configuration: columns and JSON keys named
-  like credentials are withheld, and dates in columns named like birth dates
-  are aliased.
+  Two column-name rules need no configuration: columns, composite fields and
+  JSON keys named like credentials are withheld, and dates in columns named
+  like birth dates are aliased. With the statement's lineage the rules also
+  cover columns derived from such columns under another label
+  (`min(birth_date)`, `coalesce(otp_secret, '')`, `birth_date AS dob`):
+  their text is withheld, their dates aliased, and their numbers, booleans
+  and other dates kept, since counts and checks are what debugging needs.
   """
 
-  alias AnonimizedMcp.Masking.{Aliases, Ner, Patterns}
+  alias AnonimizedMcp.Masking.{Aliases, Lineage, Ner, Patterns}
 
   @secret "[secret]"
   @secret_name ~r/password|passwd|secret|token|api_?key|private_key|credential|encryption_key|^iv$|_iv$|otp|signature|session_key|cookie/
@@ -23,11 +29,36 @@ defmodule AnonimizedMcp.Masking do
   # sometimes takes them for account numbers.
   @record_id ~r/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)?/i
 
-  @doc "Masks `rows`; `names` are the column names and `types` the Postgrex result types."
-  @spec mask(String.t(), [String.t()], list(), [list()]) :: [list()]
-  def mask(source, names, types, rows) do
-    kinds = Enum.zip_with(names, types, &column_kind/2)
-    rows = Enum.map(rows, fn row -> Enum.zip_with([row, kinds, types], &cell/1) end)
+  # Dates written out in text, as derived birth dates arrive after a cast.
+  @date ~r/(?<!\d)(?:\d{4}[-.\/]\d{1,2}[-.\/]\d{1,2}|\d{1,2}[-.\/]\d{1,2}[-.\/]\d{4})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?(?!\d)/
+  @dates [Date, NaiveDateTime, DateTime]
+
+  # One alternation of every known name outgrows PCRE's pattern size limit
+  # at a few thousand names, so name regexes are compiled in chunks.
+  @chunk 500
+
+  # Short names (Kot, Ewa) only match with Polish case endings, as whole
+  # words, and only for names of people, so common words they prefix stay.
+  @masculine_endings ~w(a u owi em iem ie owie ów om ami ach y i)
+  @feminine_endings ~w(y i ie ę ą o u)
+  @softened %{"t" => "cie", "d" => "dzie", "r" => "rze", "ł" => "le"}
+  @not_short_names ~w(pan pani pana panu dr mgr inż prof ks ul al the and van von der den del mr mrs ms sir may june july mark will bill rose)
+
+  # Capitals that label identifiers and amounts rather than name anyone.
+  @labels ~w(NIP REGON PESEL KRS IBAN NRB BIC SWIFT VAT KSEF EIN SSN TIN PLN EUR USD GBP CHF FV ID PL OK)
+
+  @doc """
+  Masks `rows`; `names` are the column names and `types` the Postgrex result
+  types. Options: `:lineage`, the names each column may derive from
+  (`Lineage.columns/2`), and `:fields`, the field tree of each column
+  (`Composites.fields/3`), for composite values.
+  """
+  @spec mask(String.t(), [String.t()], list(), [list()], keyword()) :: [list()]
+  def mask(source, names, types, rows, opts \\ []) do
+    lineage = Keyword.get_lazy(opts, :lineage, fn -> Enum.map(names, fn _ -> [] end) end)
+    fields = Keyword.get_lazy(opts, :fields, fn -> Enum.map(names, fn _ -> nil end) end)
+    kinds = Enum.zip_with([names, types, lineage, fields], &column_kind/1)
+    rows = Enum.map(rows, fn row -> Enum.zip_with(row, kinds, &cell(source, &1, &2)) end)
 
     texts = rows |> Enum.flat_map(fn row -> Enum.flat_map(row, &texts/1) end) |> Enum.uniq()
     masker = masker(source, texts)
@@ -38,67 +69,174 @@ defmodule AnonimizedMcp.Masking do
   @spec scrub(String.t(), String.t()) :: String.t()
   def scrub(source, text), do: source |> masker([text]) |> apply_masker({:text, text})
 
-  defp column_kind(name, type) do
+  defp column_kind([name, type, lineage, field]) do
+    derived =
+      for {rule, regex} <- [secret: @secret_name, birthdate: @birth_name],
+          Enum.any?(lineage, &(&1 == Lineage.unknown() or named?(regex, &1))),
+          do: rule
+
     cond do
       named?(@secret_name, name) -> :secret
       named?(@birth_name, name) -> :birthdate
-      match?({Postgrex.Extensions.UUID, _}, type) -> :uuid
-      true -> :plain
+      field == :uuid or match?({Postgrex.Extensions.UUID, _}, type) -> :uuid
+      composite?(field) -> {:fields, field}
+      true -> {:plain, derived}
     end
   end
 
-  # Cells become a tree of `{:text, string}` leaves, which need detection,
-  # and plain values, which are returned as they are.
-  defp cell([nil, _kind, _type]), do: nil
-  defp cell([_value, :secret, _type]), do: @secret
+  defp composite?({:record, _fields}), do: true
+  defp composite?({:array, elem}), do: composite?(elem)
+  defp composite?(_field), do: false
 
-  defp cell([value, :uuid, _type]),
-    do: if(is_list(value), do: Enum.map(value, &Ecto.UUID.load!/1), else: Ecto.UUID.load!(value))
+  # Cells become a tree of leaves that need detection (`{:text, string}`,
+  # `{:lexeme, word}`, `{:number, integer}`, `{:map, pairs}`) and plain
+  # values, which are returned as they are. Nothing here may raise: an
+  # exception message would carry the raw cell into the logs.
+  defp cell(_source, nil, _kind), do: nil
+  defp cell(_source, _value, :secret), do: @secret
+  defp cell(_source, value, :uuid), do: uuid(value)
+  defp cell(source, value, :birthdate), do: birth(source, value)
+  defp cell(source, value, {:fields, field}), do: fields(source, value, field)
+  defp cell(source, value, {:plain, derived}), do: value |> leaf() |> derive(source, derived)
 
-  defp cell([value, :birthdate, _type]), do: {:alias, "BIRTHDATE", to_string(plain(value))}
-  defp cell([value, :plain, _type]), do: leaf(value)
+  defp uuid(nil), do: nil
+  defp uuid(list) when is_list(list), do: Enum.map(list, &uuid/1)
+
+  defp uuid(value) do
+    case Ecto.UUID.load(value) do
+      {:ok, uuid} -> uuid
+      :error -> leaf(value)
+    end
+  end
+
+  # A birth-named column aliases its scalars whole; inside JSON only the
+  # dates are aliased and the rest is detected as usual.
+  defp birth(_source, nil), do: nil
+  defp birth(source, list) when is_list(list), do: Enum.map(list, &birth(source, &1))
+  defp birth(source, tuple) when is_tuple(tuple), do: birth(source, Tuple.to_list(tuple))
+
+  defp birth(source, %{} = map) when not is_struct(map),
+    do: map |> leaf() |> derive(source, [:birthdate])
+
+  defp birth(_source, value), do: {:alias, "BIRTHDATE", string(value)}
+
+  defp fields(_source, nil, _field), do: nil
+
+  defp fields(source, list, {:array, elem}) when is_list(list),
+    do: Enum.map(list, &fields(source, &1, elem))
+
+  defp fields(source, tuple, {:record, named})
+       when is_tuple(tuple) and tuple_size(tuple) == length(named) do
+    Enum.zip_with(Tuple.to_list(tuple), named, fn
+      value, {nil, field} ->
+        kind = if composite?(field), do: {:fields, field}, else: {:plain, [:secret, :birthdate]}
+        cell(source, value, kind)
+
+      value, {name, field} ->
+        cell(source, value, column_kind([name, nil, [], field]))
+    end)
+  end
+
+  defp fields(source, value, _field),
+    do: value |> leaf() |> derive(source, [:secret, :birthdate])
 
   defp leaf(nil), do: nil
   defp leaf(list) when is_list(list), do: Enum.map(list, &leaf/1)
 
   # Composite types, such as money_with_currency, arrive as tuples.
   defp leaf(tuple) when is_tuple(tuple), do: tuple |> Tuple.to_list() |> leaf()
+  defp leaf(value) when is_binary(value), do: text(value)
 
-  defp leaf(value) when is_binary(value) do
-    if String.valid?(value), do: {:text, value}, else: "<#{byte_size(value)} bytes>"
-  end
-
+  # Keys are detected too: per-person maps key on e-mails and names.
   defp leaf(%{} = map) when not is_struct(map) do
-    Map.new(map, fn
-      {key, nil} -> {key, nil}
-      {key, value} -> {key, if(named?(@secret_name, key), do: @secret, else: leaf(value))}
-    end)
+    {:map,
+     Enum.map(map, fn
+       {key, nil} -> {text(key), nil}
+       {key, value} -> {text(key), if(named?(@secret_name, key), do: @secret, else: leaf(value))}
+     end)}
   end
 
   # Long numbers can be PESELs, NIPs or phone numbers stored as integers.
   defp leaf(value) when is_integer(value) and abs(value) >= 100_000_000,
     do: {:number, value}
 
-  defp leaf(value), do: plain(value)
+  defp leaf(%Postgrex.INET{address: address, netmask: netmask}) do
+    case :inet.ntoa(address) do
+      {:error, _} -> {:text, inspect(address)}
+      ip -> {:text, "#{ip}#{if netmask, do: "/#{netmask}"}"}
+    end
+  end
+
+  defp leaf(%Postgrex.Lexeme{word: word}) when is_binary(word), do: {:lexeme, word}
+
+  defp leaf(%Decimal{} = d) do
+    number = Decimal.to_string(d, :normal)
+
+    if Decimal.integer?(d) and Decimal.compare(Decimal.abs(d), 100_000_000) != :lt,
+      do: {:text, number},
+      else: number
+  end
+
+  defp leaf(%mod{} = value) when mod in [Time | @dates], do: value
+  defp leaf(%_{} = value), do: text(string(value))
+  defp leaf(value), do: value
+
+  defp text(value) when is_binary(value) do
+    if String.valid?(value), do: {:text, value}, else: "<#{byte_size(value)} bytes>"
+  end
+
+  defp text(value), do: value
+
+  defp string(value) when is_binary(value), do: value
+  defp string(%Decimal{} = d), do: Decimal.to_string(d, :normal)
+
+  defp string(value) do
+    if String.Chars.impl_for(value) && not is_list(value),
+      do: to_string(value),
+      else: inspect(value)
+  end
+
+  # Applies the credential and birth-date rules to a column that derives
+  # from such a column under another label.
+  defp derive(leaves, _source, []), do: leaves
+
+  defp derive(list, source, derived) when is_list(list),
+    do: Enum.map(list, &derive(&1, source, derived))
+
+  defp derive({:map, pairs}, source, derived),
+    do: {:map, Enum.map(pairs, fn {key, value} -> {key, derive(value, source, derived)} end)}
+
+  defp derive({kind, value} = leaf, source, derived) when kind in [:text, :lexeme, :number] do
+    cond do
+      :secret in derived -> @secret
+      kind == :text -> birth_text(source, value)
+      true -> leaf
+    end
+  end
+
+  defp derive(%mod{} = date, _source, derived) when mod in @dates do
+    if :birthdate in derived, do: {:alias, "BIRTHDATE", to_string(date)}, else: date
+  end
+
+  defp derive(value, _source, _derived), do: value
+
+  defp birth_text(source, text) do
+    if text =~ @date and text |> String.replace(@date, "") |> String.trim() == "",
+      do: {:alias, "BIRTHDATE", text},
+      else: {:text, Regex.replace(@date, text, &Aliases.alias_for(source, "BIRTHDATE", &1))}
+  end
 
   defp named?(regex, name),
     do: Regex.match?(regex, name |> to_string() |> Macro.underscore() |> String.downcase())
 
-  defp plain(%Decimal{} = d), do: Decimal.to_string(d, :normal)
-  defp plain(%mod{} = value) when mod in [Date, Time, NaiveDateTime, DateTime], do: value
-
-  defp plain(%_{} = value),
-    do: if(String.Chars.impl_for(value), do: to_string(value), else: inspect(value))
-
-  defp plain(value), do: value
-
   defp texts({:text, text}), do: [text]
+  defp texts({:lexeme, word}), do: [word]
   defp texts({:number, number}), do: [Integer.to_string(number)]
+
+  defp texts({:map, pairs}),
+    do: Enum.flat_map(pairs, fn {key, value} -> texts(key) ++ texts(value) end)
+
   defp texts(list) when is_list(list), do: Enum.flat_map(list, &texts/1)
-
-  defp texts(%{} = map) when not is_struct(map),
-    do: map |> Map.values() |> Enum.flat_map(&texts/1)
-
   defp texts(_value), do: []
 
   # Detects every text once, registers the aliases, then builds the
@@ -112,29 +250,66 @@ defmodule AnonimizedMcp.Masking do
         is_binary(type),
         do: Aliases.alias_for(source, type, binary_part(text, start, len))
 
-    known = Aliases.known(source)
+    source
+    |> Aliases.cached(:masker, &known_matchers/1)
+    |> Map.merge(%{source: source, detected: detected})
+  end
 
-    exact =
-      for {canonical, alias, _} <- known,
-          byte_size(canonical) >= 4,
-          into: %{},
-          do: {canonical, alias}
+  defp known_matchers(known) do
+    exact = for {canonical, alias, _} <- known, byte_size(canonical) >= 4, do: {canonical, alias}
+    folded = Enum.group_by(exact, fn {canonical, _} -> String.downcase(canonical) end)
 
-    stems =
+    words =
       for {canonical, _, type} <- known,
           type in ["NAME", "COMPANY"],
           word <- String.split(canonical, ~r/[\s,.]+/u),
+          uniq: true,
+          do: {word, type}
+
+    stems =
+      for {word, _} <- words,
           String.length(word) >= 5,
           uniq: true,
-          do: word |> String.slice(0..-2//1) |> Regex.escape()
+          do: String.slice(word, 0..-2//1)
+
+    short =
+      for {word, "NAME"} <- words,
+          String.match?(word, ~r/^\p{Lu}\p{Ll}{2,3}$/u),
+          String.downcase(word) not in @not_short_names,
+          uniq: true,
+          do: short_forms(word)
 
     %{
-      source: source,
-      detected: detected,
-      exact: exact,
-      matcher: if(exact != %{}, do: :binary.compile_pattern(Map.keys(exact))),
-      stems: if(stems != [], do: Regex.compile!("\\b(?:#{Enum.join(stems, "|")})\\w*", "u"))
+      exact: folded,
+      cased: Map.new(exact),
+      matcher: if(folded != %{}, do: :binary.compile_pattern(Map.keys(folded))),
+      cased_matcher: if(exact != [], do: :binary.compile_pattern(Map.keys(Map.new(exact)))),
+      stem_set: MapSet.new(stems),
+      stems: stems |> Enum.map(&Regex.escape/1) |> chunks("\\w*"),
+      short: chunks(short, "\\b")
     }
+  end
+
+  # Kot: Kota, Kotowi, Kotem, Kocie; Ewa: Ewy, Ewie, Ewę.
+  defp short_forms(word) do
+    {stem, endings} =
+      if String.ends_with?(word, "a"),
+        do: {String.slice(word, 0..-2//1), ["a" | @feminine_endings]},
+        else: {word, ["" | @masculine_endings]}
+
+    softened =
+      case Map.fetch(@softened, String.last(word)) do
+        {:ok, ending} -> ["|", Regex.escape(String.slice(word, 0..-2//1) <> ending)]
+        :error -> []
+      end
+
+    IO.iodata_to_binary([Regex.escape(stem), "(?:", Enum.join(endings, "|"), ")" | softened])
+  end
+
+  defp chunks(alternatives, suffix) do
+    alternatives
+    |> Enum.chunk_every(@chunk)
+    |> Enum.map(&Regex.compile!("\\b(?:#{Enum.join(&1, "|")})#{suffix}", "iu"))
   end
 
   @doc """
@@ -146,7 +321,28 @@ defmodule AnonimizedMcp.Masking do
   @spec spans([String.t()]) :: [[{non_neg_integer(), pos_integer(), String.t() | :secret}]]
   def spans(texts) do
     prose = Enum.filter(texts, &String.match?(&1, ~r/\p{L}/u))
-    names = prose |> Enum.zip(prose |> Enum.map(&model_case/1) |> Ner.spans()) |> Map.new()
+    model = Enum.map(prose, &model_case/1)
+
+    # Words in capitals inside lower-case text ("odbiór: KOZŁOWSKA") get a
+    # second pass with those words in title case. Only what it finds on
+    # them counts, so the changed context cannot add detections elsewhere.
+    tokens =
+      for {text, shown} <- Enum.zip(prose, model),
+          shown == text,
+          {titled, words} = token_case(text),
+          words != [],
+          do: {text, titled, words}
+
+    second =
+      Enum.zip_with(tokens, tokens |> Enum.map(&elem(&1, 1)) |> Ner.spans(), fn
+        {text, _titled, words}, spans ->
+          {text, Enum.filter(spans, fn {s, l, _} -> overlaps?({s, l}, words) end)}
+      end)
+
+    names =
+      Enum.reduce(second, prose |> Enum.zip(Ner.spans(model)) |> Map.new(), fn
+        {text, spans}, acc -> Map.update!(acc, text, &(&1 ++ spans))
+      end)
 
     Enum.map(texts, fn text ->
       names = outside_record_ids(text, Map.get(names, text, []))
@@ -164,6 +360,32 @@ defmodule AnonimizedMcp.Masking do
       do: titled,
       else: text
   end
+
+  # Words joined to digits, dashes or slashes are parts of identifiers
+  # (FV/12/2026, INV-2026-1), and labels of identifiers stay in capitals:
+  # in title case the model takes "Nip" for a name.
+  defp token_case(text) do
+    words =
+      for [{start, len}] <-
+            Regex.scan(~r/(?<![\p{L}\p{N}_\/-])\p{Lu}{2,}(?![\p{L}\p{N}_\/-])/u, text,
+              return: :index
+            ),
+          word = binary_part(text, start, len),
+          titled = String.capitalize(word),
+          word not in @labels and byte_size(titled) == len,
+          do: {start, len, titled}
+
+    titled =
+      Enum.reduce(words, text, fn {start, len, word}, acc ->
+        binary_part(acc, 0, start) <>
+          word <> binary_part(acc, start + len, byte_size(acc) - start - len)
+      end)
+
+    {titled, Enum.map(words, fn {start, len, _} -> {start, len} end)}
+  end
+
+  defp overlaps?({start, len}, ranges),
+    do: Enum.any?(ranges, fn {s, l} -> start < s + l and s < start + len end)
 
   defp merge(spans) do
     spans
@@ -187,7 +409,10 @@ defmodule AnonimizedMcp.Masking do
     end)
   end
 
-  defp apply_masker(masker, {:text, text}), do: replace(masker, text)
+  defp apply_masker(masker, {:text, text}), do: replace(masker, text, false)
+
+  # Postgres lower-cases lexemes, so known values match them in any case.
+  defp apply_masker(masker, {:lexeme, word}), do: replace(masker, word, true)
 
   defp apply_masker(masker, {:alias, type, value}),
     do: Aliases.alias_for(masker.source, type, value)
@@ -195,52 +420,101 @@ defmodule AnonimizedMcp.Masking do
   defp apply_masker(masker, {:number, number}) do
     text = Integer.to_string(number)
 
-    case replace(masker, text) do
+    case replace(masker, text, false) do
       ^text -> number
       masked -> masked
     end
   end
 
+  defp apply_masker(masker, {:map, pairs}) do
+    Map.new(pairs, fn {key, value} ->
+      {apply_masker(masker, key), apply_masker(masker, value)}
+    end)
+  end
+
   defp apply_masker(masker, list) when is_list(list),
     do: Enum.map(list, &apply_masker(masker, &1))
 
-  defp apply_masker(masker, %{} = map) when not is_struct(map),
-    do: Map.new(map, fn {key, value} -> {key, apply_masker(masker, value)} end)
-
   defp apply_masker(_masker, value), do: value
 
-  defp replace(masker, text) do
-    detected = Map.fetch!(masker.detected, text)
-
-    exact =
-      if masker.matcher,
-        do: text |> :binary.matches(masker.matcher) |> Enum.map(fn {s, l} -> {s, l, :known} end),
-        else: []
-
-    stems =
-      if masker.stems,
-        do:
-          masker.stems
-          |> Regex.scan(text, return: :index)
-          |> Enum.map(fn [{s, l}] -> {s, l, "NAME"} end),
-        else: []
-
-    (detected ++ exact ++ stems)
+  defp replace(masker, text, any_case?) do
+    (Map.fetch!(masker.detected, text) ++ known_spans(masker, text, any_case?))
     |> non_overlapping()
     |> Enum.sort(:desc)
     |> Enum.reduce(text, fn {start, len, type}, acc ->
-      found = binary_part(acc, start, len)
-
       replacement =
         case type do
           :secret -> @secret
-          :known -> Map.fetch!(masker.exact, found)
-          type -> Aliases.alias_for(masker.source, type, found)
+          {:alias, alias} -> alias
+          type -> Aliases.alias_for(masker.source, type, binary_part(acc, start, len))
         end
 
       binary_part(acc, 0, start) <>
         replacement <> binary_part(acc, start + len, byte_size(acc) - start - len)
     end)
+  end
+
+  @doc false
+  # Spans of values already aliased in `source`; the benchmark reads them.
+  @spec known_spans(String.t(), String.t()) :: [{non_neg_integer(), pos_integer(), term()}]
+  def known_spans(source, text),
+    do: source |> Aliases.cached(:masker, &known_matchers/1) |> known_spans(text, false)
+
+  # Exact values, stems of long name words and declined short names. A
+  # known value matches in another capitalisation only where it starts with
+  # a capital, as names do, so a known "Maja" leaves "17 maja" alone.
+  defp known_spans(masker, text, any_case?) do
+    names =
+      for regex <- masker.stems ++ masker.short,
+          [{start, len}] <- Regex.scan(regex, text, return: :index),
+          found = binary_part(text, start, len),
+          any_case? or capitalized?(found) or stem_of?(masker.stem_set, found),
+          do: {start, len, "NAME"}
+
+    exact_spans(masker, text, any_case?) ++ names
+  end
+
+  defp exact_spans(%{matcher: nil}, _text, _any_case?), do: []
+
+  defp exact_spans(masker, text, any_case?) do
+    folded = String.downcase(text)
+
+    if byte_size(folded) == byte_size(text) do
+      for {start, len} <- :binary.matches(folded, masker.matcher),
+          key = binary_part(folded, start, len),
+          found = binary_part(text, start, len),
+          String.downcase(found) == key,
+          alias = pick(Map.fetch!(masker.exact, key), found, any_case?),
+          alias != nil,
+          do: {start, len, {:alias, alias}}
+    else
+      for {start, len} <- :binary.matches(text, masker.cased_matcher),
+          do: {start, len, {:alias, Map.fetch!(masker.cased, binary_part(text, start, len))}}
+    end
+  end
+
+  # Lower-case forms of a known single word stay: they are more often a
+  # common word than the name.
+  defp pick(candidates, found, any_case?) do
+    case List.keyfind(candidates, found, 0) do
+      {_, alias} ->
+        alias
+
+      nil ->
+        {canonical, alias} = hd(candidates)
+
+        if any_case? or capitalized?(found) or not String.match?(canonical, ~r/^\p{L}+$/u),
+          do: alias
+    end
+  end
+
+  defp capitalized?(text), do: String.match?(text, ~r/^\p{Lu}/u)
+
+  # Stems still match their own case: a lower-case company word
+  # ("budowlana") keeps matching its lower-case forms.
+  defp stem_of?(stems, found) do
+    length = String.length(found)
+    length >= 4 and Enum.any?(4..length, &MapSet.member?(stems, String.slice(found, 0, &1)))
   end
 
   # Earlier spans win.

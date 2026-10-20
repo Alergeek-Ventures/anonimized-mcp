@@ -64,6 +64,27 @@ defmodule AnonimizedMcp.Masking.Aliases do
     :ets.select(@table, [{{{source, :"$1"}, :"$2", :"$3", :_}, [], [{{:"$3", :"$1", :"$2"}}]}])
   end
 
+  @doc """
+  Returns `build.(known(source))`, cached until `source` gets a new alias.
+  Aliases are never removed and their canonical values never change, so
+  their count identifies the set.
+  """
+  @spec cached(String.t(), term(), ([{String.t(), String.t(), String.t()}] -> value)) :: value
+        when value: term()
+  def cached(source, name, build) do
+    count = :ets.select_count(@table, [{{{source, :_}, :_, :_, :_}, [], [true]}])
+
+    case :ets.lookup(@table, {source, {:cached, name}}) do
+      [{_, ^count, value}] ->
+        value
+
+      _ ->
+        value = build.(known(source))
+        :ets.insert(@table, {{source, {:cached, name}}, count, value})
+        value
+    end
+  end
+
   @doc "Regex matching any alias token."
   @spec pattern() :: Regex.t()
   def pattern, do: ~r/\b[A-Z][A-Z_]*_[a-z2-7]{8}\b/
