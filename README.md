@@ -78,6 +78,11 @@ token rotation) served by `ash_authentication_oauth2_server`. Sign in as
 `dev@alergeek.ventures` / `dev-password-123` (created by
 `priv/repo/seeds.exs`). Self-registration is disabled.
 
+Aliases are an HMAC keyed by `secret_key_base`. The development value is
+public, so set `SECRET_KEY_BASE` (`mix phx.gen.secret`) before adding a source
+with real data; otherwise aliases of guessable values (PESEL, NIP, phone
+numbers, common names) can be reversed by anyone holding a result.
+
 ## Measuring leaks
 
 - `mix run priv/sandbox/leak_check.exs` dumps every sandbox table, runs
