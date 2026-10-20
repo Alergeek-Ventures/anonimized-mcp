@@ -97,6 +97,10 @@ defmodule AnonimizedMcp.MaskingTest do
     assert error == "auth failed for [secret]"
   end
 
+  test "returns composite values as lists" do
+    assert [[["PLN", "123.45"]]] = mask(["amount"], [[{"PLN", Decimal.new("123.45")}]])
+  end
+
   test "aliases dates in birth date columns" do
     assert [[birth, issued]] =
              mask(["birth_date", "issued_on"], [[~D[1980-05-17], ~D[2026-10-01]]])

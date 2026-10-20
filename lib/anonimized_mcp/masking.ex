@@ -61,6 +61,9 @@ defmodule AnonimizedMcp.Masking do
   defp leaf(nil), do: nil
   defp leaf(list) when is_list(list), do: Enum.map(list, &leaf/1)
 
+  # Composite types, such as money_with_currency, arrive as tuples.
+  defp leaf(tuple) when is_tuple(tuple), do: tuple |> Tuple.to_list() |> leaf()
+
   defp leaf(value) when is_binary(value) do
     if String.valid?(value), do: {:text, value}, else: "<#{byte_size(value)} bytes>"
   end
