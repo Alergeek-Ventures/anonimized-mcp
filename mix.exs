@@ -43,6 +43,7 @@ defmodule AnonimizedMcp.MixProject do
     [
       {:bcrypt_elixir, "~> 3.0"},
       {:req, "~> 0.5"},
+      {:remote_ip, "~> 1.2"},
       {:hammer, "~> 7.5"},
       {:ash_authentication_oauth2_server, "~> 0.4"},
       {:pg_query_ex, "~> 0.10.0"},
