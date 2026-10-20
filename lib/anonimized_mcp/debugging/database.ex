@@ -100,7 +100,9 @@ defmodule AnonimizedMcp.Debugging.Database do
       description """
       Report a cell of an earlier query result that still shows personal data or a credential \
       masking missed. Point at it with query_id, row (zero-based) and column; never quote the \
-      value, the gateway copies the cell itself.
+      value, the gateway copies the cell itself. Cells that are ids, numbers, \
+      timestamps or already fully masked are refused. If you lost the query_id, an unknown id \
+      returns the most recent results with their columns.
       """
 
       argument :source, :string, allow_nil?: false

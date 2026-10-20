@@ -175,7 +175,8 @@ defmodule AnonimizedMcp.Gateway do
           {:ok, map()} | {:error, String.t()}
   def report_leak(source_name, query_id, row, column, note, reporter) do
     with {:ok, source} <- Sources.fetch(source_name),
-         {:ok, cell} <- Results.cell(source.name, query_id, row, column) do
+         {:ok, cell} <- Results.cell(source.name, query_id, row, column),
+         :ok <- reportable(cell) do
       LeakReport
       |> Ash.Changeset.for_create(:report, %{
         source: source.name,
@@ -189,6 +190,37 @@ defmodule AnonimizedMcp.Gateway do
       |> Ash.create!(authorize?: false)
 
       {:ok, %{reported: true}}
+    end
+  end
+
+  @record_value ~r/^\s*(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?|-?\d+(?:\.\d+)?)\s*$/i
+
+  # Cells that cannot hold personal data are refused with the reason, so an
+  # agent learns what not to report instead of filling the reports.
+  defp reportable(cell) do
+    masked_only = Regex.replace(Aliases.pattern(), cell |> List.wrap() |> inspect(), "")
+
+    cond do
+      is_nil(cell) ->
+        {:error, "That cell is empty."}
+
+      is_number(cell) or is_boolean(cell) ->
+        {:error, "That cell is a number or boolean, not personal data; do not report it."}
+
+      is_struct(cell, Date) or is_struct(cell, DateTime) or is_struct(cell, NaiveDateTime) or
+          is_struct(cell, Time) ->
+        {:error,
+         "That cell is a date or timestamp of a record, not personal data; do not report it."}
+
+      is_binary(cell) and Regex.match?(@record_value, cell) ->
+        {:error,
+         "That cell is a record id, number or timestamp, not personal data; do not report it."}
+
+      not String.match?(String.replace(masked_only, "[secret]", ""), ~r/\p{L}{2}|\d{3}/u) ->
+        {:error, "Everything in that cell is already masked; do not report it."}
+
+      true ->
+        :ok
     end
   end
 

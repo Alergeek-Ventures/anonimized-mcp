@@ -44,9 +44,33 @@ defmodule AnonimizedMcp.Gateway.Results do
     else
       :no_row -> {:error, "Row #{row} is not in that result."}
       nil -> {:error, "Column #{inspect(column)} is not in that result."}
-      _ -> {:error, "Unknown query id for source #{inspect(source)}; it may have expired."}
+      _ -> {:error, "Unknown query id for source #{inspect(source)}. #{recent(source)}"}
     end
   end
 
-  def cell(_source, _id, _row, _column), do: {:error, "Query ids look like q123."}
+  def cell(source, _id, _row, _column),
+    do: {:error, "Query ids look like q123. #{recent(source)}"}
+
+  # Agents that lose the id of a result can find it by its columns.
+  @recent 5
+
+  defp recent(source) do
+    recent =
+      :ets.foldr(
+        fn
+          {id, %{source: ^source, columns: columns}}, acc when length(acc) < @recent ->
+            ["q#{id} (#{Enum.join(columns, ", ")})" | acc]
+
+          _, acc ->
+            acc
+        end,
+        [],
+        @table
+      )
+
+    case recent do
+      [] -> "There are no recent results for this source."
+      _ -> "Most recent results, newest last: " <> Enum.join(Enum.reverse(recent), "; ") <> "."
+    end
+  end
 end
