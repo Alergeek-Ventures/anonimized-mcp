@@ -41,6 +41,10 @@ defmodule AnonimizedMcpWeb.Endpoint do
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 
+  # OAuth requests are small and partly unauthenticated (client
+  # registration), so their bodies are capped well below the default 8 MB.
+  plug :parse_oauth_body
+
   plug Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
@@ -50,4 +54,18 @@ defmodule AnonimizedMcpWeb.Endpoint do
   plug Plug.Head
   plug Plug.Session, @session_options
   plug AnonimizedMcpWeb.Router
+
+  # Plug.Parsers leaves an already parsed body alone, so the general parser
+  # above skips these requests.
+  @oauth_parsers Plug.Parsers.init(
+                   parsers: [:urlencoded, :json],
+                   pass: ["*/*"],
+                   json_decoder: Phoenix.json_library(),
+                   length: 64_000
+                 )
+
+  defp parse_oauth_body(%Plug.Conn{path_info: ["oauth" | _]} = conn, _opts),
+    do: Plug.Parsers.call(conn, @oauth_parsers)
+
+  defp parse_oauth_body(conn, _opts), do: conn
 end

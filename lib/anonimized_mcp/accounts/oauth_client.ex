@@ -39,6 +39,19 @@ defmodule AnonimizedMcp.Accounts.OauthClient do
         :scope
       ]
     end
+
+    # Replaces the library's action, which removes only stale CIMD clients:
+    # registration is open, so also remove registered clients that no
+    # operator approved within a day.
+    destroy :expunge_expired do
+      change filter(
+               expr(
+                 (not is_nil(cimd_url) and not is_nil(last_used_at) and
+                    last_used_at < ago(30, :day)) or
+                   (is_nil(cimd_url) and inserted_at < ago(1, :day) and not exists(consents, true))
+               )
+             )
+    end
   end
 
   policies do
@@ -50,14 +63,17 @@ defmodule AnonimizedMcp.Accounts.OauthClient do
   attributes do
     uuid_v7_primary_key :id
 
+    # Anyone can register a client, so its metadata is bounded.
     attribute :client_name, :string do
       allow_nil? false
       public? true
+      constraints max_length: 200
     end
 
     attribute :redirect_uris, {:array, :string} do
       allow_nil? false
       public? true
+      constraints min_length: 1, max_length: 10, items: [max_length: 2048]
     end
 
     attribute :grant_types, {:array, :string} do
@@ -85,6 +101,12 @@ defmodule AnonimizedMcp.Accounts.OauthClient do
     end
 
     timestamps()
+  end
+
+  relationships do
+    has_many :consents, AnonimizedMcp.Accounts.OauthConsent do
+      destination_attribute :client_id
+    end
   end
 
   identities do

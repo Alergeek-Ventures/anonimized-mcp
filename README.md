@@ -81,7 +81,11 @@ With a restrictive umask, run `chmod -R a+rX local/init` before the first
 `/mcp` is an OAuth 2.1 resource (PKCE, dynamic client registration, refresh
 token rotation) served by `ash_authentication_oauth2_server`. Sign in as
 `dev@alergeek.ventures` / `dev-password-123` (created by
-`priv/repo/seeds.exs`). Self-registration is disabled.
+`priv/repo/seeds.exs`; outside dev and test it requires `OPERATOR_PASSWORD`).
+Self-registration is disabled. Client registration stays open for MCP
+clients but is bounded: OAuth request bodies are capped at 64 kB, client
+names at 200 characters, redirect URIs at 10 of 2048 characters, and
+registered clients that no operator approved are removed after a day.
 
 Aliases are an HMAC keyed by `secret_key_base`. The development value is
 public, so set `SECRET_KEY_BASE` (`mix phx.gen.secret`) before adding a source
