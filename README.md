@@ -19,7 +19,7 @@ Proof of concept. It runs only against the synthetic `sandbox` database.
 | `check_value` | Properties of an aliased value (whitespace, checksums, comparison) without the value |
 | `report_leak` | Flags a cell of an earlier result that still shows personal data, by query id, row and column |
 
-Personal values become stable aliases (`NAME_k3j9x2ab`, `TAX_ID_q7m2c4ze`).
+Personal values become stable aliases (`NAME_k3j7x2ab`, `TAX_ID_q7m2c4ze`).
 The same value always gets the same alias, so results can be joined across
 queries. Agents can filter by alias (`WHERE email = 'EMAIL_…'`); the value is
 bound as a parameter inside the gateway and never appears in SQL text.

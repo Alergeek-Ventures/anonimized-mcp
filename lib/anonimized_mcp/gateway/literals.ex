@@ -2,7 +2,7 @@ defmodule AnonimizedMcp.Gateway.Literals do
   @moduledoc """
   Lets agents filter by aliases. Every string literal that contains an alias
   is replaced by a bind parameter holding the literal with each alias swapped
-  for its value, so `WHERE email = 'EMAIL_k3j9x2ab'` and
+  for its value, so `WHERE email = 'EMAIL_k3j7x2ab'` and
   `WHERE tax_id = 'TAX_ID_q7m2c4ze '` (note the space) work while the value
   never appears in SQL text, logs or error positions.
   """

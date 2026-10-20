@@ -4,7 +4,7 @@ defmodule AnonimizedMcp.Masking do
   agent, without knowing anything about the schema. Every text value,
   including strings inside JSON and arrays, goes through checksum-validated
   patterns and a local NER model; what they find becomes a stable alias such
-  as `NAME_k3j9x2ab`, or `[secret]` for credentials. Values already aliased in
+  as `NAME_k3j7x2ab`, or `[secret]` for credentials. Values already aliased in
   this source are then replaced wherever else they appear, also in declined
   forms of names, so a name the model caught once stays masked elsewhere.
 
