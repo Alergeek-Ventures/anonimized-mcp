@@ -10,13 +10,12 @@ defmodule AnonimizedMcp.Debugging.Database do
   alias AnonimizedMcp.Gateway
 
   @masking_note """
-  Personal data is replaced by stable aliases such as NAME_k3j9x2ab or TAX_ID_q7m2c4ze: the same \
-  value always gets the same alias, so aliases can be joined, grouped and compared across \
-  responses. Whitespace around a value is kept around its alias. Secrets show as [secret]. \
-  Ids, amounts, states, timestamps and technical text are returned as stored. Masking is done \
-  by a model and can miss something: if a cell still shows a person's name, contact details, \
-  an identifier or a credential, call report_leak with the query_id, row and column, and do not \
-  repeat the value anywhere.\
+  Personal data is replaced by stable aliases: an upper-case type, an underscore and eight \
+  letters or digits, such as NAME_k3j7x2ab, ADDRESS_vlt35san or TAX_ID_q7m2c4ze. The same value \
+  always gets the same alias, so aliases can be joined, grouped and compared across responses. \
+  Whitespace around a value is kept around its alias. Secrets show as [secret]. Ids, amounts, \
+  states, timestamps and technical text are returned as stored. Masking can miss something; \
+  see report_leak for what to report and what not to.\
   """
 
   actions do
@@ -98,11 +97,30 @@ defmodule AnonimizedMcp.Debugging.Database do
 
     action :report_leak, :map do
       description """
-      Report a cell of an earlier query result that still shows personal data or a credential \
-      masking missed. Point at it with query_id, row (zero-based) and column; never quote the \
-      value, the gateway copies the cell itself. Cells that are ids, numbers, \
-      timestamps or already fully masked are refused. If you lost the query_id, an unknown id \
-      returns the most recent results with their columns.
+      Report a cell of an earlier query result where personal data is still readable outside \
+      the aliases. An alias (NAME_k3j7x2ab, ADDRESS_vlt35san, [secret]) is a value that was \
+      already masked: it is never a leak, and neither is the ordinary text around it.
+
+      Report only text you can read that identifies a person or is a credential:
+      - a first name or surname, also declined ("z Tomkiem Nowakiem", "dla Anny Kowalskiej"), \
+      in capitals, inside a sentence, a transfer title, an e-mail subject or a file name;
+      - an e-mail address, phone number, street address, PESEL, ID card or passport number, \
+      bank account number or date of birth;
+      - a profile link that names a person (GitHub, LinkedIn, Slack, social media);
+      - a password, token, API key or similar credential;
+      - a company name that contains a person's name, such as a sole trader's business.
+
+      Do not report: aliases and the text around them, countries and cities on their own, \
+      company names without a person's name, ids and UUIDs, numbers, amounts, dates and \
+      timestamps, invoice and KSeF numbers, states, queue and worker names, error messages \
+      without personal data, file paths, URLs of services, and reference data such as PostGIS \
+      tables.
+
+      Point at the cell with query_id, row (zero-based) and column, once per cell, and use \
+      `note` to say what kind of data is readable ("surname in a transfer title"), never the \
+      value: the gateway copies the cell itself. Cells that are ids, numbers, timestamps or \
+      fully masked are refused. If you lost the query_id, an unknown id returns the most recent \
+      results with their columns.
       """
 
       argument :source, :string, allow_nil?: false
