@@ -60,6 +60,12 @@ defmodule AnonimizedMcp.Masking.Ner do
   @digit_types ~w(PERSON_IDENTIFIER BANK_ACCOUNT_IDENTIFIER PAYMENT_CARD ACCOUNT_IDENTIFIER
                   DOCUMENT_IDENTIFIER VEHICLE_IDENTIFIER)
 
+  # Polish vehicle plates: a voivodeship letter and district code, then five
+  # characters starting with a digit (WA 12345, KR 7XY12) or, after a
+  # three-letter code, four mixing letters and digits (WPI A123). ORD1234 and
+  # FV/2024/03/117 do not fit.
+  @plate ~r/^[BCDEFGKLNOPRSTWZ](?:[A-Z] ?\d[A-Z0-9]{4}|[A-Z]{2} ?(?:\d[A-Z0-9]{4}|(?=[A-Z0-9]{0,3}[A-Z])(?=[A-Z0-9]{0,3}\d)[A-Z0-9]{4}))$/
+
   @word ~r/[^\s,;|"<>()\[\]{}*^]+/u
   @edges ~r/^[(\[{<"'«„]*(.*?)[)\]}>"'».,;:!?]*$/su
   @urlish ~r/(https?:\/\/|www\.|\w\.[a-z]{2,}\b|\/\w)/iu
@@ -188,10 +194,21 @@ defmodule AnonimizedMcp.Masking.Ner do
     |> Enum.filter(fn {s, e, type} -> valid?(binary_part(text, s, e - s), type) end)
     |> Enum.flat_map(fn {s, e, type} ->
       case Map.fetch(@alias_types, type) do
-        _ when type in @kept -> []
-        {:ok, alias_type} -> [{s, e - s, alias_type}]
-        :error when type in @id_types -> [{s, e - s, "ID"}]
-        :error -> [{s, e - s, "SENSITIVE"}]
+        # The model often calls plates references; invoice numbers stay.
+        _ when type == "DOCUMENT_REFERENCE" ->
+          if plate?(binary_part(text, s, e - s)), do: [{s, e - s, "ID"}], else: []
+
+        _ when type in @kept ->
+          []
+
+        {:ok, alias_type} ->
+          [{s, e - s, alias_type}]
+
+        :error when type in @id_types ->
+          [{s, e - s, "ID"}]
+
+        :error ->
+          [{s, e - s, "SENSITIVE"}]
       end
     end)
   end
@@ -260,6 +277,14 @@ defmodule AnonimizedMcp.Masking.Ner do
   defp valid?(value, "PHONE_NUMBER"), do: digit_count(value) >= 5
   defp valid?(value, type) when type in @digit_types, do: digit_count(value) >= 2
   defp valid?(_value, _type), do: true
+
+  # Text in capitals reaches the model title-cased (Kr 7Xy12).
+  defp plate?(value) do
+    upper = String.upcase(value)
+
+    value in [upper, Regex.replace(~r/\p{L}+/u, upper, &String.capitalize/1)] and
+      Regex.match?(@plate, upper)
+  end
 
   defp digit_count(value), do: value |> String.replace(~r/\D/, "") |> byte_size()
 

@@ -1,8 +1,9 @@
 defmodule AnonimizedMcp.Masking.Identifiers do
   @moduledoc """
-  Checksum validation for Polish identifiers (NIP, PESEL, REGON) and IBAN/NRB
-  account numbers. Detectors use it to tell real identifiers from arbitrary
-  digit runs, and value checks use it to report validity without the value.
+  Checksum validation for Polish identifiers (NIP, PESEL, REGON, ID card and
+  passport numbers), IBAN/NRB account numbers and payment cards. Detectors
+  use it to tell real identifiers from arbitrary digit runs, and value checks
+  use it to report validity without the value.
   """
 
   @doc "Returns whether `value` is a NIP with a valid checksum (digits only, optional PL prefix)."
@@ -66,6 +67,82 @@ defmodule AnonimizedMcp.Masking.Identifiers do
       |> String.to_integer()
       |> rem(97) == 1
     end
+  end
+
+  @doc """
+  Returns whether `value` is a Polish ID card number (`ABA300000`): three
+  letters and six digits, the first digit checking the rest with weights
+  7, 3, 1 and letters counted from A=10. A space after the letters is allowed.
+  """
+  @spec id_card?(String.t()) :: boolean()
+  def id_card?(value), do: document?(value, ~r/^[A-Z]{3}\d{6}$/, [7, 3, 1, 9, 7, 3, 1, 7, 3])
+
+  @doc """
+  Returns whether `value` is a Polish passport number (`CC7999486`): two
+  letters and seven digits, the first digit checking the rest the same way.
+  A space after the letters is allowed.
+  """
+  @spec passport?(String.t()) :: boolean()
+  def passport?(value), do: document?(value, ~r/^[A-Z]{2}\d{7}$/, [7, 3, 9, 1, 7, 3, 1, 7, 3])
+
+  @doc """
+  Returns whether `value` (digits, optionally grouped by spaces or hyphens)
+  is a payment card number: a known issuer prefix and length, and a valid
+  Luhn checksum. The prefix check keeps millisecond timestamps, barcodes
+  and `20241018120000_` migration versions out.
+  """
+  @spec card?(String.t()) :: boolean()
+  def card?(value) do
+    compact = String.replace(value, [" ", "-"], "")
+    d = digits(compact)
+    length(d) in card_lengths(compact) and luhn(d) == 0
+  end
+
+  # Visa, Amex, Diners/JCB, Mastercard, Maestro/Discover/UnionPay. Lengths
+  # are the ones in use, so EAN-13 barcodes (590...) stay readable.
+  defp card_lengths("4" <> _), do: [16, 19]
+  defp card_lengths("34" <> _), do: [15]
+  defp card_lengths("37" <> _), do: [15]
+  defp card_lengths("3" <> _), do: 14..19
+  defp card_lengths("5" <> <<c>> <> _) when c in ?1..?5, do: [16]
+  defp card_lengths("5" <> _), do: 16..19
+  defp card_lengths("6" <> _), do: 16..19
+
+  defp card_lengths("2" <> _ = value) do
+    case Integer.parse(String.slice(value, 0, 4)) do
+      {prefix, ""} when prefix in 2221..2720 -> [16]
+      _ -> []
+    end
+  end
+
+  defp card_lengths(_), do: []
+
+  defp luhn(digits) do
+    digits
+    |> Enum.reverse()
+    |> Enum.with_index()
+    |> Enum.map(fn
+      {d, i} when rem(i, 2) == 1 and d > 4 -> d * 2 - 9
+      {d, i} when rem(i, 2) == 1 -> d * 2
+      {d, _} -> d
+    end)
+    |> Enum.sum()
+    |> rem(10)
+  end
+
+  # The check digit has weight 9, which is -1 mod 10, so the whole sum is 0.
+  defp document?(value, shape, weights) do
+    compact = String.replace(value, " ", "", global: false)
+
+    String.match?(compact, shape) and
+      compact
+      |> String.to_charlist()
+      |> Enum.map(fn
+        c when c in ?0..?9 -> c - ?0
+        c -> c - ?A + 10
+      end)
+      |> weighted(weights)
+      |> rem(10) == 0
   end
 
   defp regon_check(digits, weights, check) do
