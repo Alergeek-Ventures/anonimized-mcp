@@ -42,16 +42,21 @@ and `EXPLAIN` refuses aliases, since a plan prints bound values.
    regardless.
 2. Every text value, including strings inside JSON and arrays, goes through
    checksum-validated patterns (NIP and EU VAT numbers, PESEL, REGON,
-   IBAN/NRB, e-mail, phone, profile links, IP, password hashes, JWTs, random
-   tokens) and the
+   IBAN/NRB, payment cards, ID cards and passports, e-mail, phone, profile
+   links, IP, password hashes, JWTs, random tokens) and the
    [bardsai/eu-pii-anonimization-multilang-v2](https://huggingface.co/bardsai/eu-pii-anonimization-multilang-v2)
-   NER model, run in-process on CPU through ONNX Runtime. UUIDs and
+   NER model, run in-process on CPU through ONNX Runtime. Words written in
+   capitals are also shown to the model title-cased. Addresses, tsvector
+   lexemes, large numerics and JSON keys are checked like text. UUIDs and
    timestamps are never masked.
 3. Values aliased so far in the source are replaced wherever else they
-   appear, also by name stem, so a name found once stays masked in declined
-   forms elsewhere.
+   appear, in any letter case and also by name stem, so a name found once
+   stays masked in declined forms elsewhere.
 4. Columns and JSON keys named like credentials are withheld as `[secret]`;
-   dates in columns named like birth dates are aliased.
+   dates in columns named like birth dates are aliased. The rules follow
+   where a result column comes from in the statement, so `min(birth_date)`,
+   `coalesce(token, '')` or `AS x` keep them, and apply per field to whole
+   rows (`SELECT u FROM users u`).
 5. Database errors are rewritten: data exceptions lose quoted input, and
    every message is masked. Other failures return a generic message and
    log only the exception type, never its text.
@@ -62,8 +67,8 @@ start into the user cache directory, pinned to one revision and checked by
 SHA-256; the server does not start until it is loaded.
 
 Masking can miss things, mostly Polish names declined after a preposition
-("z Tomkiem Nowakiem") and surnames inside company names. Agents are told to report such cells with
-`report_leak`; reports are stored in `leak_reports` with the masked cell,
+("z Tomkiem Nowakiem") and surnames inside company names. Agents are told
+to report such cells with `report_leak`; reports are stored in `leak_reports` with the masked cell,
 copied from the gateway's own copy of the result, never from the agent.
 
 ## Running locally
