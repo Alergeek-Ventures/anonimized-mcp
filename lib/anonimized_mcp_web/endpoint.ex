@@ -38,12 +38,6 @@ defmodule AnonimizedMcpWeb.Endpoint do
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :anonimized_mcp
   end
 
-  # Deployed behind Caddy, which replaces X-Forwarded-For from untrusted
-  # clients and appends the peer it saw. RemoteIp takes the rightmost address
-  # outside private ranges, so rate limits and the sign-in audit log see the
-  # client instead of the proxy.
-  plug RemoteIp, headers: ~w(x-forwarded-for)
-
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
 

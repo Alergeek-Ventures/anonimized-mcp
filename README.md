@@ -96,10 +96,8 @@ OAuth request bodies are capped at 64 kB, client names at 200 characters,
 redirect URIs at 10 of 2048 characters, and registered clients that no
 operator approved are removed after a day. Each client IP may register 10
 clients an hour and make 60 other OAuth requests a minute; past that the
-server answers 429. The client IP is the rightmost public address in
-`X-Forwarded-For`, which the reverse proxy (Caddy on Coolify) sets; a proxy
-in front must replace or append to that header, never pass a client's own
-value through as the last entry.
+server answers 429. The limits count `remote_ip`, so behind a reverse proxy
+the client address must first be taken from the proxy's header.
 
 Aliases are an HMAC keyed by `secret_key_base`. The development value is
 public, so set `SECRET_KEY_BASE` (`mix phx.gen.secret`) before adding a source
