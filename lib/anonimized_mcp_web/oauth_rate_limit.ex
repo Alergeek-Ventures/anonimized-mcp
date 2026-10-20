@@ -4,9 +4,8 @@ defmodule AnonimizedMcpWeb.OauthRateLimit do
   unauthenticated and stores a row, so it gets a much lower limit than the
   token, revocation and discovery endpoints.
 
-  The key is `conn.remote_ip`. Behind a reverse proxy every request carries the
-  proxy's address, so the client IP must first be set from a header written by
-  a trusted proxy, for example with a RemoteIp plug in the endpoint.
+  The key is `conn.remote_ip`, the client's address as set by
+  `AnonimizedMcpWeb.ClientIp`.
   """
 
   @behaviour Plug
