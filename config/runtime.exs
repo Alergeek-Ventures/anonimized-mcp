@@ -73,7 +73,8 @@ if config_env() == :prod do
     oauth2_issuer_url: phx_url,
     oauth2_resource_url: phx_url <> "/mcp",
     google_client_id: System.fetch_env!("GOOGLE_CLIENT_ID"),
-    google_client_secret: System.fetch_env!("GOOGLE_CLIENT_SECRET")
+    google_client_secret: System.fetch_env!("GOOGLE_CLIENT_SECRET"),
+    google_domain: System.fetch_env!("GOOGLE_WORKSPACE_DOMAIN")
 
   # The database agents query, through a read-only role. One instance serves
   # one app; the source is named SOURCE_NAME, or after the database.

@@ -1,5 +1,5 @@
 defmodule AnonimizedMcp.Accounts.GoogleSignInTest do
-  use AnonimizedMcp.DataCase, async: true
+  use AnonimizedMcp.DataCase, async: false
 
   alias AnonimizedMcp.Accounts.User
 
@@ -43,5 +43,15 @@ defmodule AnonimizedMcp.Accounts.GoogleSignInTest do
                "hd" => "alergeek.ventures",
                "email_verified" => false
              })
+  end
+
+  test "admits the configured Workspace" do
+    Application.put_env(:anonimized_mcp, :google_domain, "example.com")
+    on_exit(fn -> Application.put_env(:anonimized_mcp, :google_domain, "alergeek.ventures") end)
+
+    assert {:ok, _} = register(%{"email" => "ada@example.com", "hd" => "example.com"})
+
+    assert {:error, %Ash.Error.Invalid{}} =
+             register(%{"email" => "ada@alergeek.ventures", "hd" => "alergeek.ventures"})
   end
 end

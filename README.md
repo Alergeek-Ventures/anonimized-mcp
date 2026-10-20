@@ -85,8 +85,9 @@ With a restrictive umask, run `chmod -R a+rX local/init` before the first
 
 `/mcp` is an OAuth 2.1 resource (PKCE, dynamic client registration, refresh
 token rotation) served by `ash_authentication_oauth2_server`. People sign in
-with Google: only verified accounts of the alergeek.ventures Workspace (the
-`hd` claim) are admitted, and an account is created on first sign-in. Set
+with Google: only verified accounts of the Workspace named by
+`GOOGLE_WORKSPACE_DOMAIN` (the `hd` claim) are admitted, and an account is
+created on first sign-in; dev and test use alergeek.ventures. Set
 `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from a Web client whose
 redirect URI is `<url>/auth/user/google/callback`. Dev and test also accept
 a password: sign in as `dev@alergeek.ventures` / `dev-password-123` (created
@@ -124,6 +125,7 @@ app's server. It reads its configuration from the environment:
 | `SECRET_KEY_BASE` | `mix phx.gen.secret`; also keys the aliases, so keep it stable |
 | `TOKEN_SIGNING_SECRET`, `OAUTH2_SIGNING_SECRET` | `mix phx.gen.secret` each |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | see above |
+| `GOOGLE_WORKSPACE_DOMAIN` | the Workspace whose accounts may sign in, e.g. `example.com` |
 | `SOURCE_URL` | the database agents query, through a read-only role |
 | `SOURCE_NAME` | optional name agents see, the database's name by default |
 | `SOURCE_DESCRIPTION` | optional, shown by `list_sources` |

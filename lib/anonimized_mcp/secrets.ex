@@ -40,6 +40,17 @@ defmodule AnonimizedMcp.Secrets do
     Application.fetch_env(:anonimized_mcp, :google_client_secret)
   end
 
+  # Setting any parameter replaces Google's default scope, so email is asked
+  # for again.
+  def secret_for(
+        [:authentication, :strategies, :google, :authorization_params],
+        AnonimizedMcp.Accounts.User,
+        _opts,
+        _context
+      ) do
+    {:ok, scope: "email", hd: Application.fetch_env!(:anonimized_mcp, :google_domain)}
+  end
+
   def secret_for(
         [:authentication, :strategies, :google, :redirect_uri],
         AnonimizedMcp.Accounts.User,

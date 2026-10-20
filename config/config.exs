@@ -57,8 +57,11 @@ config :spark,
     "Ash.Domain": [section_order: [:resources, :policies, :authorization, :domain, :execution]]
   ]
 
-# Production signs in with Google only (AnonimizedMcp.Accounts.User).
-config :anonimized_mcp, password_sign_in?: config_env() != :prod
+# Production signs in with Google only (AnonimizedMcp.Accounts.User), with
+# accounts of the Workspace set by GOOGLE_WORKSPACE_DOMAIN.
+config :anonimized_mcp,
+  password_sign_in?: config_env() != :prod,
+  google_domain: "alergeek.ventures"
 
 config :anonimized_mcp,
   ecto_repos: [AnonimizedMcp.Repo],

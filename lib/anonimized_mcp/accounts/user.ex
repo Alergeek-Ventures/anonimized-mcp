@@ -6,9 +6,8 @@ defmodule AnonimizedMcp.Accounts.User do
     authorizers: [Ash.Policy.Authorizer],
     extensions: [AshAuthentication]
 
-  # Staff sign in with their Google Workspace account. Passwords exist only
-  # in dev and test, where there is no Google client.
-  @domain "alergeek.ventures"
+  # Staff sign in with their Google Workspace account (`:google_domain`).
+  # Passwords exist only in dev and test, where there is no Google client.
   @password? Application.compile_env(:anonimized_mcp, :password_sign_in?, false)
 
   authentication do
@@ -55,9 +54,9 @@ defmodule AnonimizedMcp.Accounts.User do
         client_secret AnonimizedMcp.Secrets
         redirect_uri AnonimizedMcp.Secrets
         identity_resource AnonimizedMcp.Accounts.UserIdentity
-        # Google's default scope is replaced, so email is asked for again; hd only
-        # narrows the account picker, WorkspaceAccount enforces the domain.
-        authorization_params scope: "email", hd: @domain
+        # Asks for the email and narrows the account picker to the Workspace;
+        # WorkspaceAccount enforces the domain.
+        authorization_params AnonimizedMcp.Secrets
       end
     end
   end
@@ -149,7 +148,7 @@ defmodule AnonimizedMcp.Accounts.User do
       upsert? true
       upsert_identity :unique_email
 
-      validate {AnonimizedMcp.Accounts.WorkspaceAccount, domain: @domain}
+      validate AnonimizedMcp.Accounts.WorkspaceAccount
       change AshAuthentication.GenerateTokenChange
       change AshAuthentication.Strategy.OAuth2.IdentityChange
 

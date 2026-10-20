@@ -1,6 +1,6 @@
 defmodule AnonimizedMcp.Accounts.WorkspaceAccount do
   @moduledoc """
-  Admits a Google account only if it belongs to the `:domain` Workspace and
+  Admits a Google account only if it belongs to the `:google_domain` Workspace and
   Google has verified its email. The `hd` claim names the Workspace; the
   `hd` authorization parameter only narrows the account picker.
   """
@@ -8,8 +8,8 @@ defmodule AnonimizedMcp.Accounts.WorkspaceAccount do
   use Ash.Resource.Validation
 
   @impl true
-  def validate(changeset, opts, _context) do
-    domain = Keyword.fetch!(opts, :domain)
+  def validate(changeset, _opts, _context) do
+    domain = Application.fetch_env!(:anonimized_mcp, :google_domain)
     user_info = Ash.Changeset.get_argument(changeset, :user_info) || %{}
 
     if user_info["hd"] == domain and user_info["email_verified"] == true and

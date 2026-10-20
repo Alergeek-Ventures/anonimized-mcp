@@ -16,8 +16,11 @@ defmodule AnonimizedMcpWeb.AuthController do
   def failure(conn, activity, _reason) do
     message =
       case activity do
-        {:google, _phase} -> "Sign in with an alergeek.ventures Google account"
-        _password -> "Incorrect email or password"
+        {:google, _phase} ->
+          "Sign in with a #{Application.fetch_env!(:anonimized_mcp, :google_domain)} Google account"
+
+        _password ->
+          "Incorrect email or password"
       end
 
     conn
