@@ -92,3 +92,7 @@ numbers, common names) can be reversed by anyone holding a result.
 - `bench/` compares PII detectors on Polish and English cells shaped like
   database content; `mix run bench/gateway.exs` scores the gateway's own
   detection there (see `bench/README.md`).
+
+## License
+
+MIT, see `LICENSE`.
