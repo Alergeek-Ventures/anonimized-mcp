@@ -76,11 +76,14 @@ if config_env() == :prod do
     google_client_secret: System.fetch_env!("GOOGLE_CLIENT_SECRET")
 
   # The database agents query, through a read-only role. One instance serves
-  # one app; the source is named after the database.
+  # one app; the source is named SOURCE_NAME, or after the database.
   source_url = System.fetch_env!("SOURCE_URL")
 
+  source_name =
+    System.get_env("SOURCE_NAME") || String.trim_leading(URI.parse(source_url).path, "/")
+
   sources = %{
-    String.trim_leading(URI.parse(source_url).path, "/") => [
+    source_name => [
       url: source_url,
       description: System.get_env("SOURCE_DESCRIPTION", "")
     ]

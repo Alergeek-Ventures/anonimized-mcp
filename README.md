@@ -124,7 +124,8 @@ app's server. It reads its configuration from the environment:
 | `SECRET_KEY_BASE` | `mix phx.gen.secret`; also keys the aliases, so keep it stable |
 | `TOKEN_SIGNING_SECRET`, `OAUTH2_SIGNING_SECRET` | `mix phx.gen.secret` each |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | see above |
-| `SOURCE_URL` | the database agents query, through a read-only role; the source takes the database's name |
+| `SOURCE_URL` | the database agents query, through a read-only role |
+| `SOURCE_NAME` | optional name agents see, the database's name by default |
 | `SOURCE_DESCRIPTION` | optional, shown by `list_sources` |
 
 ## Measuring leaks
