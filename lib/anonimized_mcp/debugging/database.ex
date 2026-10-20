@@ -14,8 +14,11 @@ defmodule AnonimizedMcp.Debugging.Database do
   letters or digits, such as NAME_k3j7x2ab, ADDRESS_vlt35san or TAX_ID_q7m2c4ze. The same value \
   always gets the same alias, so aliases can be joined, grouped and compared across responses. \
   Whitespace around a value is kept around its alias. Secrets show as [secret]. Ids, amounts, \
-  states, timestamps and technical text are returned as stored. Masking can miss something; \
-  see report_leak for what to report and what not to.\
+  states, timestamps and technical text are returned as stored. An alias stands for the real, \
+  stored value: it is not missing, placeholder or invalid data. To learn whether the value behind \
+  an alias is well formed (a valid NIP, IBAN or e-mail, stray whitespace, letter case), call \
+  check_value with the alias; to filter by it, write the alias in a string literal. Masking can \
+  miss something; see report_leak for what to report and what not to.\
   """
 
   actions do
