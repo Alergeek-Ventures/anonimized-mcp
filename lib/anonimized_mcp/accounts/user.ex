@@ -11,6 +11,14 @@ defmodule AnonimizedMcp.Accounts.User do
       log_out_everywhere do
         apply_on_password_change? true
       end
+
+      # Records sign-in attempts; the password strategy counts its failures.
+      # Sensitive arguments (password, tokens) are left out by the add-on.
+      audit_log do
+        audit_log_resource AnonimizedMcp.Accounts.AuditLog
+        include_strategies [:password, :remember_me]
+        ip_privacy_mode :truncate
+      end
     end
 
     tokens do
@@ -27,6 +35,10 @@ defmodule AnonimizedMcp.Accounts.User do
         hash_provider AshAuthentication.BcryptProvider
         # Operators are created with priv/repo/seeds.exs, not by self-registration.
         registration_enabled? false
+        # Refuse sign-in for an email after 5 failures within 5 minutes.
+        brute_force_strategy {:audit_log, :audit_log}
+        audit_log_window 5
+        audit_log_max_failures 5
       end
 
       remember_me :remember_me
@@ -67,6 +79,10 @@ defmodule AnonimizedMcp.Accounts.User do
         description "Whether to generate a remember me token"
         allow_nil? true
       end
+
+      # refuses the attempt when the audit log has too many recent failures
+      prepare {AshAuthentication.AddOn.AuditLog.IdentityBruteForcePreparation,
+               action_name: :sign_in_with_password}
 
       # validates the provided email and password and generates a token
       prepare AshAuthentication.Strategy.Password.SignInPreparation

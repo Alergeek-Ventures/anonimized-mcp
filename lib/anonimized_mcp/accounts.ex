@@ -5,6 +5,7 @@ defmodule AnonimizedMcp.Accounts do
   resources do
     resource AnonimizedMcp.Accounts.Token
     resource AnonimizedMcp.Accounts.User
+    resource AnonimizedMcp.Accounts.AuditLog
     resource AnonimizedMcp.Accounts.OauthClient
     resource AnonimizedMcp.Accounts.OauthAuthorizationCode
     resource AnonimizedMcp.Accounts.OauthRefreshToken
