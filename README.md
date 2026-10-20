@@ -84,12 +84,15 @@ With a restrictive umask, run `chmod -R a+rX local/init` before the first
 `podman-compose up`, or Postgres cannot read the init script.
 
 `/mcp` is an OAuth 2.1 resource (PKCE, dynamic client registration, refresh
-token rotation) served by `ash_authentication_oauth2_server`. Sign in as
-`dev@alergeek.ventures` / `dev-password-123` (created by
-`priv/repo/seeds.exs`; outside dev and test it requires `OPERATOR_PASSWORD`).
-Self-registration is disabled. After 5 failed sign-ins for an email within
-5 minutes, further attempts for it are refused until the window passes, even
-with the correct password. Sign-in attempts are recorded in `auth_audit_log`
+token rotation) served by `ash_authentication_oauth2_server`. People sign in
+with Google: only verified accounts of the alergeek.ventures Workspace (the
+`hd` claim) are admitted, and an account is created on first sign-in. Set
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from a Web client whose
+redirect URI is `<url>/auth/user/google/callback`. Dev and test also accept
+a password: sign in as `dev@alergeek.ventures` / `dev-password-123` (created
+by `priv/repo/seeds.exs`). After 5 failed password sign-ins for an email
+within 5 minutes, further attempts for it are refused until the window
+passes, even with the correct password. Sign-in attempts are recorded in `auth_audit_log`
 (email, outcome, IP truncated to /24 or /48, no passwords or tokens) and kept
 for 30 days. Client registration stays open for MCP clients but is bounded:
 OAuth request bodies are capped at 64 kB, client names at 200 characters,
@@ -105,6 +108,24 @@ Aliases are an HMAC keyed by `secret_key_base`. The development value is
 public, so set `SECRET_KEY_BASE` (`mix phx.gen.secret`) before adding a source
 with real data; otherwise aliases of guessable values (PESEL, NIP, phone
 numbers, common names) can be reversed by anyone holding a result.
+
+## Deploying
+
+Every push to `main` publishes `ghcr.io/alergeek-ventures/anonimized-mcp`
+(`latest` and `sha-<commit>`). The image ships the NER model, runs
+migrations on start and listens on port 4000 behind a TLS proxy. Run one
+instance next to each app it serves, so original values stay on that
+app's server. It reads its configuration from the environment:
+
+| Variable | |
+|---|---|
+| `PHX_URL` | public URL, e.g. `https://app-mcp.example.com`; OAuth and the Google callback derive from it |
+| `DATABASE_URL` | the gateway's own database (operators, OAuth clients, leak reports) |
+| `SECRET_KEY_BASE` | `mix phx.gen.secret`; also keys the aliases, so keep it stable |
+| `TOKEN_SIGNING_SECRET`, `OAUTH2_SIGNING_SECRET` | `mix phx.gen.secret` each |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | see above |
+| `SOURCE_<NAME>_URL` | a database agents may query, through a read-only role |
+| `SOURCE_<NAME>_DESCRIPTION` | optional, shown by `list_sources` |
 
 ## Measuring leaks
 

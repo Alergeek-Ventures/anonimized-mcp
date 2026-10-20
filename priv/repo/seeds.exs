@@ -2,26 +2,18 @@
 #
 #     mix run priv/repo/seeds.exs
 #
-# The default password is public (README), so anywhere but dev and test the
-# password must come from OPERATOR_PASSWORD.
+# Its password is public (README) and passwords exist only in dev and test;
+# production signs in with Google.
 
-email = System.get_env("OPERATOR_EMAIL", "dev@alergeek.ventures")
+if Mix.env() not in [:dev, :test] do
+  Mix.raise("Seeds are for dev and test; #{Mix.env()} signs in with Google.")
+end
 
-password =
-  case {System.get_env("OPERATOR_PASSWORD"), Mix.env()} do
-    {nil, env} when env in [:dev, :test] ->
-      "dev-password-123"
-
-    {nil, env} ->
-      Mix.raise("Set OPERATOR_PASSWORD to seed an operator in #{env}; the default is public.")
-
-    {password, _env} ->
-      password
-  end
+email = "dev@alergeek.ventures"
 
 Ash.Seed.seed!(AnonimizedMcp.Accounts.User, %{
   email: email,
-  hashed_password: Bcrypt.hash_pwd_salt(password)
+  hashed_password: Bcrypt.hash_pwd_salt("dev-password-123")
 })
 
 IO.puts("Operator #{email} created")

@@ -10,5 +10,6 @@ defmodule AnonimizedMcp.Accounts do
     resource AnonimizedMcp.Accounts.OauthAuthorizationCode
     resource AnonimizedMcp.Accounts.OauthRefreshToken
     resource AnonimizedMcp.Accounts.OauthConsent
+    resource AnonimizedMcp.Accounts.UserIdentity
   end
 end

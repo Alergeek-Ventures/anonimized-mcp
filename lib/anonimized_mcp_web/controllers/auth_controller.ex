@@ -13,9 +13,15 @@ defmodule AnonimizedMcpWeb.AuthController do
     |> redirect(to: return_to)
   end
 
-  def failure(conn, _activity, _reason) do
+  def failure(conn, activity, _reason) do
+    message =
+      case activity do
+        {:google, _phase} -> "Sign in with an alergeek.ventures Google account"
+        _password -> "Incorrect email or password"
+      end
+
     conn
-    |> put_flash(:error, "Incorrect email or password")
+    |> put_flash(:error, message)
     |> redirect(to: ~p"/sign-in")
   end
 

@@ -78,7 +78,7 @@ defmodule AnonimizedMcp.Masking.Ner do
   # Loading is synchronous, so nothing is served before the model can mask it.
   @impl true
   def init(nil) do
-    dir = download()
+    dir = download!()
     {:ok, tokenizer} = Tokenizers.Tokenizer.from_file(Path.join(dir, "tokenizer.json"))
 
     labels =
@@ -288,7 +288,12 @@ defmodule AnonimizedMcp.Masking.Ner do
 
   defp digit_count(value), do: value |> String.replace(~r/\D/, "") |> byte_size()
 
-  defp download do
+  @doc """
+  Downloads the model files that are not yet in the cache and returns their
+  directory. Container images call it at build time.
+  """
+  @spec download!() :: Path.t()
+  def download! do
     dir = Path.join(:filename.basedir(:user_cache, "anonimized_mcp"), "bardsai-#{@revision}")
 
     for {file, sha256} <- @files, path = Path.join(dir, file), not File.exists?(path) do

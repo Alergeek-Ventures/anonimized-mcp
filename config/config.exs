@@ -57,6 +57,9 @@ config :spark,
     "Ash.Domain": [section_order: [:resources, :policies, :authorization, :domain, :execution]]
   ]
 
+# Production signs in with Google only (AnonimizedMcp.Accounts.User).
+config :anonimized_mcp, password_sign_in?: config_env() != :prod
+
 config :anonimized_mcp,
   ecto_repos: [AnonimizedMcp.Repo],
   generators: [timestamp_type: :utc_datetime, binary_id: true],

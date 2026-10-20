@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+cd -P -- "$(dirname -- "$0")"
+exec ./anonimized_mcp eval AnonimizedMcp.Release.migrate

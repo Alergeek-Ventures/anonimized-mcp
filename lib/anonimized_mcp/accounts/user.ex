@@ -6,6 +6,11 @@ defmodule AnonimizedMcp.Accounts.User do
     authorizers: [Ash.Policy.Authorizer],
     extensions: [AshAuthentication]
 
+  # Staff sign in with their Google Workspace account. Passwords exist only
+  # in dev and test, where there is no Google client.
+  @domain "alergeek.ventures"
+  @password? Application.compile_env(:anonimized_mcp, :password_sign_in?, false)
+
   authentication do
     add_ons do
       log_out_everywhere do
@@ -16,7 +21,7 @@ defmodule AnonimizedMcp.Accounts.User do
       # Sensitive arguments (password, tokens) are left out by the add-on.
       audit_log do
         audit_log_resource AnonimizedMcp.Accounts.AuditLog
-        include_strategies [:password, :remember_me]
+        include_strategies if(@password?, do: [:password], else: []) ++ [:remember_me, :google]
         ip_privacy_mode :truncate
       end
     end
@@ -30,18 +35,29 @@ defmodule AnonimizedMcp.Accounts.User do
     end
 
     strategies do
-      password :password do
-        identity_field :email
-        hash_provider AshAuthentication.BcryptProvider
-        # Operators are created with priv/repo/seeds.exs, not by self-registration.
-        registration_enabled? false
-        # Refuse sign-in for an email after 5 failures within 5 minutes.
-        brute_force_strategy {:audit_log, :audit_log}
-        audit_log_window 5
-        audit_log_max_failures 5
+      if @password? do
+        password :password do
+          identity_field :email
+          hash_provider AshAuthentication.BcryptProvider
+          # Operators are created with priv/repo/seeds.exs, not by self-registration.
+          registration_enabled? false
+          # Refuse sign-in for an email after 5 failures within 5 minutes.
+          brute_force_strategy {:audit_log, :audit_log}
+          audit_log_window 5
+          audit_log_max_failures 5
+        end
       end
 
       remember_me :remember_me
+
+      google :google do
+        client_id AnonimizedMcp.Secrets
+        client_secret AnonimizedMcp.Secrets
+        redirect_uri AnonimizedMcp.Secrets
+        identity_resource AnonimizedMcp.Accounts.UserIdentity
+        # Only offers the domain's accounts; WorkspaceAccount enforces it.
+        authorization_params hd: @domain
+      end
     end
   end
 
@@ -60,68 +76,83 @@ defmodule AnonimizedMcp.Accounts.User do
       prepare AshAuthentication.Preparations.FilterBySubject
     end
 
-    read :sign_in_with_password do
-      description "Attempt to sign in using a email and password."
-      get? true
+    if @password? do
+      read :sign_in_with_password do
+        description "Attempt to sign in using a email and password."
+        get? true
 
-      argument :email, :ci_string do
-        description "The email to use for retrieving the user."
-        allow_nil? false
+        argument :email, :ci_string do
+          description "The email to use for retrieving the user."
+          allow_nil? false
+        end
+
+        argument :password, :string do
+          description "The password to check for the matching user."
+          allow_nil? false
+          sensitive? true
+        end
+
+        argument :remember_me, :boolean do
+          description "Whether to generate a remember me token"
+          allow_nil? true
+        end
+
+        # refuses the attempt when the audit log has too many recent failures
+        prepare {AshAuthentication.AddOn.AuditLog.IdentityBruteForcePreparation,
+                 action_name: :sign_in_with_password}
+
+        # validates the provided email and password and generates a token
+        prepare AshAuthentication.Strategy.Password.SignInPreparation
+
+        # generates a remember me token if the remember_me argument is true
+        prepare {AshAuthentication.Strategy.RememberMe.MaybeGenerateTokenPreparation,
+                 strategy_name: :remember_me}
+
+        metadata :token, :string do
+          description "A JWT that can be used to authenticate the user."
+          allow_nil? false
+        end
       end
 
-      argument :password, :string do
-        description "The password to check for the matching user."
-        allow_nil? false
-        sensitive? true
-      end
+      read :sign_in_with_token do
+        # In the generated sign in components, we validate the
+        # email and password directly in the LiveView
+        # and generate a short-lived token that can be used to sign in over
+        # a standard controller action, exchanging it for a standard token.
+        # This action performs that exchange. If you do not use the generated
+        # liveviews, you may remove this action, and set
+        # `sign_in_tokens_enabled? false` in the password strategy.
 
-      argument :remember_me, :boolean do
-        description "Whether to generate a remember me token"
-        allow_nil? true
-      end
+        description "Attempt to sign in using a short-lived sign in token."
+        get? true
 
-      # refuses the attempt when the audit log has too many recent failures
-      prepare {AshAuthentication.AddOn.AuditLog.IdentityBruteForcePreparation,
-               action_name: :sign_in_with_password}
+        argument :token, :string do
+          description "The short-lived sign in token."
+          allow_nil? false
+          sensitive? true
+        end
 
-      # validates the provided email and password and generates a token
-      prepare AshAuthentication.Strategy.Password.SignInPreparation
+        # validates the provided sign in token and generates a token
+        prepare AshAuthentication.Strategy.Password.SignInWithTokenPreparation
 
-      # generates a remember me token if the remember_me argument is true
-      prepare {AshAuthentication.Strategy.RememberMe.MaybeGenerateTokenPreparation,
-               strategy_name: :remember_me}
-
-      metadata :token, :string do
-        description "A JWT that can be used to authenticate the user."
-        allow_nil? false
+        metadata :token, :string do
+          description "A JWT that can be used to authenticate the user."
+          allow_nil? false
+        end
       end
     end
 
-    read :sign_in_with_token do
-      # In the generated sign in components, we validate the
-      # email and password directly in the LiveView
-      # and generate a short-lived token that can be used to sign in over
-      # a standard controller action, exchanging it for a standard token.
-      # This action performs that exchange. If you do not use the generated
-      # liveviews, you may remove this action, and set
-      # `sign_in_tokens_enabled? false` in the password strategy.
+    create :register_with_google do
+      argument :user_info, :map, allow_nil?: false
+      argument :oauth_tokens, :map, allow_nil?: false, sensitive?: true
+      upsert? true
+      upsert_identity :unique_email
 
-      description "Attempt to sign in using a short-lived sign in token."
-      get? true
+      validate {AnonimizedMcp.Accounts.WorkspaceAccount, domain: @domain}
+      change AshAuthentication.GenerateTokenChange
+      change AshAuthentication.Strategy.OAuth2.IdentityChange
 
-      argument :token, :string do
-        description "The short-lived sign in token."
-        allow_nil? false
-        sensitive? true
-      end
-
-      # validates the provided sign in token and generates a token
-      prepare AshAuthentication.Strategy.Password.SignInWithTokenPreparation
-
-      metadata :token, :string do
-        description "A JWT that can be used to authenticate the user."
-        allow_nil? false
-      end
+      change {AshAuthentication.Strategy.OAuth2.UserInfoToAttributes, fields: [:email]}
     end
   end
 
@@ -140,7 +171,6 @@ defmodule AnonimizedMcp.Accounts.User do
     end
 
     attribute :hashed_password, :string do
-      allow_nil? false
       sensitive? true
     end
   end

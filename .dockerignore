@@ -1,0 +1,16 @@
+# The Containerfile copies only what the release needs; this keeps local
+# state and the private devenv overrides out of the build context.
+_build
+deps
+.devenv
+.direnv
+devenv.local.nix
+tmp
+local
+bench
+test
+priv/static/assets
+priv/static/cache_manifest.json
+.git
+.claude
+.envrc
