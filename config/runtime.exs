@@ -75,15 +75,16 @@ if config_env() == :prod do
     google_client_id: System.fetch_env!("GOOGLE_CLIENT_ID"),
     google_client_secret: System.fetch_env!("GOOGLE_CLIENT_SECRET")
 
-  # Databases agents may query: SOURCE_<NAME>_URL, through a read-only role,
-  # and an optional SOURCE_<NAME>_DESCRIPTION.
-  sources =
-    for {key, url} <- System.get_env(),
-        [_, name] <- [Regex.run(~r/^SOURCE_([A-Z0-9_]+)_URL$/, key)],
-        into: %{} do
-      description = System.get_env("SOURCE_#{name}_DESCRIPTION", "")
-      {String.downcase(name), [url: url, description: description]}
-    end
+  # The database agents query, through a read-only role. One instance serves
+  # one app; the source is named after the database.
+  source_url = System.fetch_env!("SOURCE_URL")
+
+  sources = %{
+    String.trim_leading(URI.parse(source_url).path, "/") => [
+      url: source_url,
+      description: System.get_env("SOURCE_DESCRIPTION", "")
+    ]
+  }
 
   config :anonimized_mcp, :sources, sources
 end
