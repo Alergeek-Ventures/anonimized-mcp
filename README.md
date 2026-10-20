@@ -22,20 +22,24 @@ Proof of concept. It runs only against the synthetic `sandbox` database.
 Personal values become stable aliases (`NAME_k3j7x2ab`, `TAX_ID_q7m2c4ze`).
 The same value always gets the same alias, so results can be joined across
 queries. Agents can filter by alias (`WHERE email = 'EMAIL_…'`); the value is
-bound as a parameter inside the gateway and never appears in SQL text.
+bound as a text parameter inside the gateway and never appears in SQL text.
+Columns that are not text need a cast (`birth_date::text = 'BIRTHDATE_…'`),
+and `EXPLAIN` refuses aliases, since a plan prints bound values.
 
 ## How masking works
 
-1. `pg_query` parses the statement; only one `SELECT` or `EXPLAIN` is
-   accepted, and `pg_stats`-like relations are refused. Functions are
-   allowlisted (aggregates, window, date/time, JSON, arrays, numbers, and
-   text functions that return parts of their input unchanged); anything
-   that could rewrite a name past the detectors, such as `reverse`,
-   `translate` or `encode`, and casts to `bytea` are refused; case changes
+1. `pg_query` parses the statement; only one `SELECT` or `EXPLAIN SELECT`
+   is accepted, and `pg_stats`-like relations and `XMLTABLE` are refused.
+   Functions are allowlisted (aggregates, window, date/time, JSON, arrays,
+   numbers, and text functions that return parts of their input
+   unchanged); anything that could rewrite a name past the detectors, such
+   as `reverse`, `translate` or `encode`, also called in attribute notation
+   (`(name).reverse`), and casts to `bytea` are refused; case changes
    (`lower`, `upper`, `initcap`), which weaken detection, may filter and
-   sort but not appear in a select list
-   (`lib/anonimized_mcp/gateway/statement.ex`). The database role must be
-   read-only regardless.
+   sort but not appear in a select list, a function in `FROM` or `VALUES`
+   (`lib/anonimized_mcp/gateway/statement.ex`). Advisory locks are
+   released after every query. The database role must be read-only
+   regardless.
 2. Every text value, including strings inside JSON and arrays, goes through
    checksum-validated patterns (NIP and EU VAT numbers, PESEL, REGON,
    IBAN/NRB, e-mail, phone, profile links, IP, password hashes, JWTs, random
@@ -48,8 +52,9 @@ bound as a parameter inside the gateway and never appears in SQL text.
    forms elsewhere.
 4. Columns and JSON keys named like credentials are withheld as `[secret]`;
    dates in columns named like birth dates are aliased.
-5. Database errors are rewritten: data exceptions lose quoted input, other
-   messages are masked.
+5. Database errors are rewritten: data exceptions lose quoted input, and
+   every message is masked. Other failures return a generic message and
+   log only the exception type, never its text.
 
 The query runs as a single autocommit statement and the connection returns
 to the pool before masking starts. The model (340 MB) is downloaded on first

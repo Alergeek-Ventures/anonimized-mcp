@@ -10,6 +10,8 @@ defmodule AnonimizedMcp.Gateway.Statement do
   than refused by name: aggregates, window functions, date and time, JSON,
   arrays, numbers, and text functions that return parts of their input
   unchanged. Casts to `bytea` are refused too, since `bytea` prints as hex.
+  Attribute notation (`(name).reverse`, `alias.reverse`) is a function call
+  too, so a trailing name must be a known column or an allowed function.
 
   This closes the ordinary paths, not every one: SQL is expressive enough to
   rebuild a value character by character. The threat model is accidental
@@ -46,23 +48,52 @@ defmodule AnonimizedMcp.Gateway.Statement do
   # what a query returns.
   @case_functions ~w(lower upper initcap)
 
-  @doc "Parses `sql` and returns the statement if the gateway may run it."
-  @spec parse(String.t()) :: {:ok, PgQuery.Node.t()} | {:error, String.t()}
-  def parse(sql) do
+  @doc """
+  Parses `sql` and returns the statement if the gateway may run it.
+
+  `names` are the column and field names of the source. PostgreSQL reads
+  `x.name` and `(x).name` as the call `name(x)` when `x` has no such field,
+  so a trailing name that is neither a known name nor an allowed function is
+  refused.
+  """
+  @spec parse(String.t(), MapSet.t(String.t())) :: {:ok, PgQuery.Node.t()} | {:error, String.t()}
+  def parse(sql, names \\ MapSet.new()) do
     case PgQuery.parse(sql) do
+      # EXPLAIN ANALYZE runs the explained statement.
+      {:ok,
+       %{
+         stmts: [
+           %{
+             stmt: %PgQuery.Node{
+               node: {:explain_stmt, %PgQuery.ExplainStmt{query: %PgQuery.Node{node: {kind, _}}}}
+             }
+           }
+         ]
+       }}
+      when kind != :select_stmt ->
+        {:error, "Only SELECT statements can be explained."}
+
       {:ok, %{stmts: [%{stmt: %PgQuery.Node{node: {kind, _}} = statement}]}}
       when kind in [:select_stmt, :explain_stmt] ->
-        case statement |> references([], :input) |> Enum.reverse() |> Enum.find(&refused?/1) do
+        references = statement |> references([], :input) |> Enum.reverse()
+        names = for {:name, name} <- references, into: names, do: name
+
+        case Enum.find(references, &refused?(&1, names)) do
           nil ->
             {:ok, statement}
 
           {:relation, name} ->
             {:error, "#{name} exposes sample column values and is not available."}
 
+          {:attribute, name, _context} ->
+            {:error,
+             "#{name} is not a column here, so `x.#{name}` or `(x).#{name}` would call " <>
+               "#{name}(x), which is not available."}
+
           {:function, name, :output} when name in @case_functions ->
             {:error,
-             "#{name}() is not available in the select list, where it would weaken masking; " <>
-               "use it in WHERE, JOIN, GROUP BY or ORDER BY."}
+             "#{name}() is not available in the select list, FROM functions or VALUES, " <>
+               "where it would weaken masking; use it in WHERE, JOIN, GROUP BY or ORDER BY."}
 
           {:function, name, _context} ->
             {:error,
@@ -89,26 +120,95 @@ defmodule AnonimizedMcp.Gateway.Statement do
   @spec select?(PgQuery.Node.t()) :: boolean()
   def select?(statement), do: match?(%PgQuery.Node{node: {:select_stmt, _}}, statement)
 
-  defp refused?({:relation, name}), do: name in @blocked_relations
-  defp refused?({:cast, type}), do: type == "bytea"
+  defp refused?({:relation, name}, _names), do: name in @blocked_relations
+  defp refused?({:cast, type}, _names), do: type == "bytea"
+  defp refused?({:name, _name}, _names), do: false
 
-  defp refused?({:function, name, context}) do
+  defp refused?({:function, name, context}, _names) do
     (name not in @allowed_functions and not String.starts_with?(name, @json_prefixes)) or
       (context == :output and name in @case_functions)
   end
 
-  # `context` is `:output` inside a select list, at any depth, since a
-  # subquery's columns can become the result.
-  defp references(%PgQuery.RangeVar{relname: name}, acc, _context), do: [{:relation, name} | acc]
+  defp refused?({:attribute, name, context}, names),
+    do: not MapSet.member?(names, name) and refused?({:function, name, context}, names)
 
-  defp references(%PgQuery.SelectStmt{target_list: targets} = select, acc, context) do
+  # `context` is `:output` wherever a value can become a result column, at
+  # any depth: select lists, VALUES rows and functions in FROM.
+  defp references(%PgQuery.RangeVar{relname: name, alias: alias}, acc, context),
+    do: references(alias, [{:relation, name} | acc], context)
+
+  defp references(
+         %PgQuery.SelectStmt{target_list: targets, values_lists: values} = select,
+         acc,
+         context
+       ) do
     acc = references(targets, acc, :output)
+    acc = references(values, acc, :output)
 
     select
     |> Map.from_struct()
-    |> Map.delete(:target_list)
+    |> Map.drop([:target_list, :values_lists])
     |> Map.values()
     |> references(acc, context)
+  end
+
+  defp references(%PgQuery.RangeFunction{} = range, acc, _context),
+    do: range |> Map.from_struct() |> Map.values() |> references(acc, :output)
+
+  defp references(%PgQuery.JsonTable{} = table, acc, _context),
+    do: table |> Map.from_struct() |> Map.values() |> references(acc, :output)
+
+  # XMLTABLE evaluates XPath, whose string functions (translate) go unchecked.
+  defp references(%PgQuery.RangeTableFunc{}, acc, context),
+    do: [{:function, "xmltable", context} | acc]
+
+  # Names the statement gives to columns and relations.
+  defp references(%PgQuery.ResTarget{name: name} = target, acc, context) when name != "" do
+    target |> Map.from_struct() |> Map.values() |> references([{:name, name} | acc], context)
+  end
+
+  defp references(%PgQuery.Alias{aliasname: name, colnames: colnames}, acc, _context),
+    do: Enum.reduce(colnames, [{:name, name} | acc], &[{:name, name(&1)} | &2])
+
+  defp references(
+         %PgQuery.CommonTableExpr{ctename: name, aliascolnames: colnames} = cte,
+         acc,
+         context
+       ) do
+    acc = Enum.reduce(colnames, [{:name, name} | acc], &[{:name, name(&1)} | &2])
+
+    cte
+    |> Map.from_struct()
+    |> Map.delete(:aliascolnames)
+    |> Map.values()
+    |> references(acc, context)
+  end
+
+  defp references(%PgQuery.ColumnDef{colname: name} = column, acc, context) do
+    column |> Map.from_struct() |> Map.values() |> references([{:name, name} | acc], context)
+  end
+
+  # `(expr).name` calls name(expr) when expr has no field called name.
+  defp references(%PgQuery.A_Indirection{indirection: indirection} = node, acc, context) do
+    attributes =
+      for %PgQuery.Node{node: {:string, %PgQuery.String{sval: name}}} <- indirection,
+          do: {:attribute, name, context}
+
+    node
+    |> Map.from_struct()
+    |> Map.values()
+    |> references(Enum.reverse(attributes, acc), context)
+  end
+
+  # So does `alias.name` when alias has no column called name.
+  defp references(%PgQuery.ColumnRef{fields: [_, _ | _] = fields}, acc, context) do
+    case List.last(fields) do
+      %PgQuery.Node{node: {:string, %PgQuery.String{sval: name}}} ->
+        [{:attribute, name, context} | acc]
+
+      _star ->
+        acc
+    end
   end
 
   # Built-in functions may be qualified with pg_catalog; any other schema is

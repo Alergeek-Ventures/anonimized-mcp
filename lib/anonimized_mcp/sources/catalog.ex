@@ -36,6 +36,37 @@ defmodule AnonimizedMcp.Sources.Catalog do
     AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   """
 
+  # Every name `x.name` or `(x).name` can select: columns of tables, views and
+  # composite types (system catalogs included) and output fields of functions.
+  @names_sql """
+  SELECT a.attname::text FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+  WHERE NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'c')
+  UNION
+  SELECT u.name FROM pg_proc p, unnest(p.proargnames, p.proargmodes) AS u(name, mode)
+  WHERE u.mode IN ('o', 'b', 't') AND u.name <> ''
+  """
+
+  @doc """
+  Returns the names a field selection can refer to in `source`, so the
+  gateway can tell `alias.column` from attribute notation calling a function.
+  """
+  @spec names(Sources.t()) :: {:ok, MapSet.t(String.t())} | {:error, Postgrex.Error.t()}
+  def names(%Sources{name: name} = source) do
+    now = System.monotonic_time(:millisecond)
+
+    case :persistent_term.get({__MODULE__, name, :names}, nil) do
+      {loaded_at, names} when now - loaded_at < @ttl_ms ->
+        {:ok, names}
+
+      _ ->
+        with {:ok, result} <- Postgrex.query(Sources.connection(source), @names_sql, []) do
+          names = MapSet.new(result.rows, &hd/1)
+          :persistent_term.put({__MODULE__, name, :names}, {now, names})
+          {:ok, names}
+        end
+    end
+  end
+
   @doc "Returns the cached catalog of `source`, loading it when stale or `refresh?`."
   @spec get(Sources.t(), boolean()) :: {:ok, t()} | {:error, Postgrex.Error.t()}
   def get(%Sources{name: name} = source, refresh? \\ false) do

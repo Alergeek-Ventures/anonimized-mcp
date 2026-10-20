@@ -17,6 +17,8 @@ defmodule AnonimizedMcp.Gateway do
   alias AnonimizedMcp.Sources
   alias AnonimizedMcp.Sources.Catalog
 
+  require Logger
+
   @max_limit 500
   @select_prefix "SELECT * FROM (\n"
 
@@ -69,8 +71,10 @@ defmodule AnonimizedMcp.Gateway do
     sql = sql |> String.trim() |> String.trim_trailing(";")
 
     with {:ok, source} <- Sources.fetch(source_name),
-         {:ok, statement} <- Statement.parse(sql),
-         {:ok, rewritten, params} <- Literals.substitute(sql, source.name) do
+         {:ok, names} <- names(source),
+         {:ok, statement} <- Statement.parse(sql, names),
+         {:ok, rewritten, params} <- Literals.substitute(sql, source.name),
+         :ok <- explainable(statement, params) do
       started = System.monotonic_time(:millisecond)
 
       case execute(source, statement, rewritten, params, limit) do
@@ -102,6 +106,11 @@ defmodule AnonimizedMcp.Gateway do
           {:error, database_error(source.name, error, shift)}
       end
     end
+  rescue
+    # Exceptions can carry bound values or cells; only their type is logged.
+    exception ->
+      Logger.error("Query failed with #{inspect(exception.__struct__)}")
+      {:error, "The query failed unexpectedly."}
   end
 
   @doc """
@@ -239,16 +248,44 @@ defmodule AnonimizedMcp.Gateway do
     end
   end
 
+  defp names(source) do
+    case Catalog.names(source) do
+      {:ok, names} -> {:ok, names}
+      {:error, error} -> {:error, database_error(source.name, error, 0)}
+    end
+  end
+
+  # The plan prints bound parameters as constants, after folding lower() and
+  # the like over them, so it would show the values behind aliases.
+  defp explainable(statement, params) do
+    if params == [] or Statement.select?(statement),
+      do: :ok,
+      else:
+        {:error,
+         "EXPLAIN cannot use aliases: the plan would print the values behind them. " <>
+           "Put any literal of the same type in their place; the plan is the same."}
+  end
+
   defp execute(source, statement, sql, params, limit) do
     sql =
       if Statement.select?(statement),
         do: "#{@select_prefix}#{sql}\n) AS anonimized_mcp_query LIMIT #{limit + 1}",
         else: sql
 
-    Postgrex.prepare_execute(Sources.connection(source), "", sql, params)
+    DBConnection.run(Sources.connection(source), fn conn ->
+      result = Postgrex.prepare_execute(conn, "", sql, params)
+      # Session state such as advisory locks must not outlive the query.
+      Postgrex.query(conn, "SELECT pg_advisory_unlock_all()", [])
+      result
+    end)
+  rescue
+    # Only alias values are bound; encoding fails when the column is not
+    # text, and the message holds the value.
+    DBConnection.EncodeError -> {:error, :alias_type}
   end
 
-  # Data exceptions (class 22) quote the offending input; drop the quotes.
+  # Data exceptions (class 22) quote the offending input, which may itself
+  # contain quotes; drop everything from the first quote to the last.
   defp database_error(
          source,
          %Postgrex.Error{postgres: %{code: code, pg_code: pg_code} = pg},
@@ -256,8 +293,10 @@ defmodule AnonimizedMcp.Gateway do
        ) do
     message =
       if String.starts_with?(pg_code, "22"),
-        do: String.replace(pg.message, ~r/"[^"]*"|'[^']*'/, "<value>"),
-        else: Masking.scrub(source, pg.message)
+        do: String.replace(pg.message, ~r/"(?s:.*)"|'(?s:.*)'/u, "<value>"),
+        else: pg.message
+
+    message = Masking.scrub(source, message)
 
     position =
       case pg[:position] do
@@ -270,6 +309,11 @@ defmodule AnonimizedMcp.Gateway do
 
     "Database error #{pg_code} (#{code})#{position}: #{message}"
   end
+
+  defp database_error(_source, :alias_type, _shift),
+    do:
+      "An alias was compared with a column that is not text, so its value could not be " <>
+        "bound. Cast the column to text: birth_date::text = 'BIRTHDATE_...'."
 
   defp database_error(_source, %DBConnection.ConnectionError{}, _shift),
     do: "The database is unreachable or the query timed out."
