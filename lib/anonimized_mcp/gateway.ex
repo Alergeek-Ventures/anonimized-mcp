@@ -13,7 +13,7 @@ defmodule AnonimizedMcp.Gateway do
   alias AnonimizedMcp.Debugging.LeakReport
   alias AnonimizedMcp.Gateway.{Literals, Results, Statement}
   alias AnonimizedMcp.Masking
-  alias AnonimizedMcp.Masking.{Aliases, Identifiers}
+  alias AnonimizedMcp.Masking.{Aliases, Composites, Identifiers, Lineage}
   alias AnonimizedMcp.Sources
   alias AnonimizedMcp.Sources.Catalog
 
@@ -84,7 +84,14 @@ defmodule AnonimizedMcp.Gateway do
               source.name,
               query.columns,
               query.result_types,
-              Enum.take(result.rows, limit)
+              Enum.take(result.rows, limit),
+              lineage: Lineage.columns(statement, query.columns),
+              fields:
+                Composites.fields(
+                  Sources.connection(source),
+                  query.result_oids,
+                  query.result_types
+                )
             )
 
           query_id = Results.put(%{source: source.name, columns: query.columns, rows: rows})
