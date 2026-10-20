@@ -1,8 +1,8 @@
 defmodule AnonimizedMcp.Masking.Patterns do
   @moduledoc """
   Finds personal data and credentials that have a fixed shape: e-mails,
-  phone numbers, IBAN/NRB, NIP, PESEL, REGON, IP addresses, password hashes,
-  JWTs and long random tokens. Digit-based identifiers only count when their
+  profile links, phone numbers, IBAN/NRB, NIP and EU VAT numbers, PESEL,
+  REGON, IP addresses, password hashes, JWTs and long random tokens. Digit-based identifiers only count when their
   checksum holds, so amounts, dates and record numbers stay readable.
   """
 

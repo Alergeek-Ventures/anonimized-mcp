@@ -26,7 +26,7 @@ defmodule AnonimizedMcp.MaskingTest do
              "record 1b4e28ba-2fa1-11d2-883f-0016d3cca427 at 2026-10-18T09:12:44Z, 1230.00 PLN"
   end
 
-  test "masks profile links and international phone numbers" do
+  test "masks profile links and phone numbers" do
     for text <- [
           "https://github.com/someone",
           "https://www.linkedin.com/in/some-one-123/",

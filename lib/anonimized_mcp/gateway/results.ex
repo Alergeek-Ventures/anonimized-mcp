@@ -9,6 +9,7 @@ defmodule AnonimizedMcp.Gateway.Results do
 
   @table __MODULE__
   @kept 1000
+  @recent 5
 
   @type result :: %{source: String.t(), columns: [String.t()], rows: [list()]}
 
@@ -52,8 +53,6 @@ defmodule AnonimizedMcp.Gateway.Results do
     do: {:error, "Query ids look like q123. #{recent(source)}"}
 
   # Agents that lose the id of a result can find it by its columns.
-  @recent 5
-
   defp recent(source) do
     recent =
       :ets.foldr(

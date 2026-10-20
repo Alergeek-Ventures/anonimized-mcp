@@ -37,8 +37,9 @@ bound as a parameter inside the gateway and never appears in SQL text.
    (`lib/anonimized_mcp/gateway/statement.ex`). The database role must be
    read-only regardless.
 2. Every text value, including strings inside JSON and arrays, goes through
-   checksum-validated patterns (NIP, PESEL, REGON, IBAN/NRB, e-mail, phone,
-   IP, password hashes, JWTs, random tokens) and the
+   checksum-validated patterns (NIP and EU VAT numbers, PESEL, REGON,
+   IBAN/NRB, e-mail, phone, profile links, IP, password hashes, JWTs, random
+   tokens) and the
    [bardsai/eu-pii-anonimization-multilang-v2](https://huggingface.co/bardsai/eu-pii-anonimization-multilang-v2)
    NER model, run in-process on CPU through ONNX Runtime. UUIDs and
    timestamps are never masked.
@@ -56,7 +57,7 @@ start into the user cache directory, pinned to one revision and checked by
 SHA-256; the server does not start until it is loaded.
 
 Masking can miss things, mostly Polish names declined after a preposition
-("z Tomkiem Nowakiem"). Agents are told to report such cells with
+("z Tomkiem Nowakiem") and surnames inside company names. Agents are told to report such cells with
 `report_leak`; reports are stored in `leak_reports` with the masked cell,
 copied from the gateway's own copy of the result, never from the agent.
 

@@ -20,6 +20,9 @@ defmodule AnonimizedMcp.Gateway do
   @max_limit 500
   @select_prefix "SELECT * FROM (\n"
 
+  # Cells that can only be record ids, numbers or timestamps.
+  @record_value ~r/^\s*(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?|-?\d+(?:\.\d+)?)\s*$/i
+
   @doc "Lists the configured sources."
   @spec list_sources() :: [%{name: String.t(), description: String.t()}]
   def list_sources, do: Enum.map(Sources.all(), &Map.take(&1, [:name, :description]))
@@ -192,8 +195,6 @@ defmodule AnonimizedMcp.Gateway do
       {:ok, %{reported: true}}
     end
   end
-
-  @record_value ~r/^\s*(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?|-?\d+(?:\.\d+)?)\s*$/i
 
   # Cells that cannot hold personal data are refused with the reason, so an
   # agent learns what not to report instead of filling the reports.
