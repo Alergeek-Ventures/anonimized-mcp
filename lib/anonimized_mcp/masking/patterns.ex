@@ -15,7 +15,7 @@ defmodule AnonimizedMcp.Masking.Patterns do
     {"EMAIL", ~r/(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}(?![\w-])/u, nil},
     # Profile links name a person; other URLs stay readable.
     {"PROFILE",
-     ~r/(?:https?:\/\/)?(?:www\.)?(?:github\.com|gitlab\.com|linkedin\.com\/in|x\.com|twitter\.com|facebook\.com|instagram\.com)\/[^\s\/?#"'<>]+\/?/i,
+     ~r/(?:https?:\/\/)?(?:www\.)?(?:github\.com|gitlab\.com|linkedin\.com\/in|x\.com|twitter\.com|facebook\.com|instagram\.com|[\w-]+\.slack\.com\/team)\/[^\s\/?#"'<>]+\/?/i,
      nil},
     {:secret, ~r/\beyJ[\w-]+\.[\w-]+\.[\w-]+/, nil},
     {:secret, ~r/\$(?:argon2(?:id|i|d)|2[aby])\$[^\s"'}]+/, nil},

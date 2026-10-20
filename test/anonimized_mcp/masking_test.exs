@@ -31,6 +31,7 @@ defmodule AnonimizedMcp.MaskingTest do
           "https://github.com/someone",
           "https://www.linkedin.com/in/some-one-123/",
           "linkedin.com/in/someone",
+          "https://example.slack.com/team/U01ABCDEF",
           "+48 600 12 34 56",
           "+1 (555) 123-4567",
           "+420 12 345 67 89",
