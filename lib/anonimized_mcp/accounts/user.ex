@@ -55,8 +55,9 @@ defmodule AnonimizedMcp.Accounts.User do
         client_secret AnonimizedMcp.Secrets
         redirect_uri AnonimizedMcp.Secrets
         identity_resource AnonimizedMcp.Accounts.UserIdentity
-        # Only offers the domain's accounts; WorkspaceAccount enforces it.
-        authorization_params hd: @domain
+        # Google's default scope is replaced, so email is asked for again; hd only
+        # narrows the account picker, WorkspaceAccount enforces the domain.
+        authorization_params scope: "email", hd: @domain
       end
     end
   end
