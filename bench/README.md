@@ -49,7 +49,7 @@ error names that were masked. Bonsai sizes ran on an M2 Pro (Metal) over a
 | Detector | corpus | keep broken | pl-pii-bench | p50 per cell |
 |---|---|---|---|---|
 | regex + bardsai (ONNX INT8; pl-pii-bench with fp32) | 3.5% | 2.3% | 12.6% | 44 ms CPU |
-| gateway (Elixir, 2026-10-20) | 2.6% | 2.3% | | 41 ms CPU |
+| gateway (Elixir, 2026-10-20) | 2.3% | 2.3% | | 44 ms CPU |
 | regex + nym | 9.0% | | 13.9% | |
 | regex + gliner2-pl | 11.1% | | | |
 | Bonsai 2 27B alone, subset | 3.3% | 0% | 17.6% | 9.5 s M2 |

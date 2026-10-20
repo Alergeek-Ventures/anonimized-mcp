@@ -370,6 +370,75 @@ defmodule AnonimizedMcp.MaskingTest do
     end
   end
 
+  test "masks first names in file names, slugs and declined prose" do
+    alias AnonimizedMcp.Masking.FirstNames
+
+    for {text, names} <- [
+          {"invoice_march_acme_marta_zielinska.pdf", ["marta", "zielinska"]},
+          {"2024-07-tomek-fv.pdf", ["tomek"]},
+          {"kamil/abc-12-fix-login", ["kamil"]},
+          {"rozmowa z tomkiem o planie", ["tomkiem"]},
+          {"Spotkanie z Kasią i Piotrem", ["Kasią", "Piotrem"]}
+        ] do
+      found = for {s, l, "NAME"} <- FirstNames.spans(text), do: binary_part(text, s, l)
+      assert found == names, text
+    end
+
+    for text <- [
+          "mark_sync_failed",
+          "max_attempts reached",
+          "Kawa różnych marek",
+          "od 3 do 5 maja",
+          "fix all-data sync_all_transactions",
+          "0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d"
+        ] do
+      assert FirstNames.spans(text) == [], text
+    end
+  end
+
+  test "aliases account numbers with a failed checksum in account columns" do
+    for value <- ["12 3456 7890 1234 5678 9012 3456", "12-1234567-1234567890123456"] do
+      assert [[account]] = mask(["seller_account_number"], [[value]])
+      assert account =~ @alias, value
+    end
+  end
+
+  test "aliases street lines in address columns and after a street prefix" do
+    assert [[address]] = mask(["mail_address"], [["Kwiatowa 7/14\n00-001 Warszawa"]])
+    refute address =~ "Kwiatowa"
+
+    assert [{start, len, "ADDRESS"}] = Patterns.spans("dostawa na ul. Długa 12/3 jutro")
+    assert binary_part("dostawa na ul. Długa 12/3 jutro", start, len) == "ul. Długa 12/3"
+  end
+
+  test "masks lines naming health care" do
+    for text <- [
+          "Gabinet Psychoterapii Dziecięcej",
+          "Nadmorskie Centrum Zdrowia Psychi",
+          "NIEPUBLICZNY GABINET LEKARSKI LEK. MED"
+        ] do
+      assert [{0, len, "SENSITIVE"}] = Patterns.spans(text), text
+      assert len == byte_size(text), text
+    end
+
+    assert [] = Patterns.spans("Poradnik dla turystów")
+  end
+
+  test "matches short known values only as whole words" do
+    source = "whole-words-#{System.unique_integer([:positive])}"
+    Aliases.alias_for(source, "NAME", "Inka")
+    Aliases.alias_for(source, "ADDRESS", "Kraków")
+    t = [@text]
+
+    assert [["Opłata INKASO"]] = Masking.mask(source, ["note"], t, [["Opłata INKASO"]])
+
+    assert [["Kraków. Spacerownik"]] =
+             Masking.mask(source, ["note"], t, [["Kraków. Spacerownik"]])
+
+    assert [[note]] = Masking.mask(source, ["note"], t, [["Dla Inka, pilne"]])
+    assert note =~ ~r/^Dla NAME_[a-z2-7]{8}, pilne$/
+  end
+
   test "masks personal data in JSON keys and keeps ordinary keys" do
     assert [[prefs]] =
              mask(["prefs"], [[%{"jan.kowalski@example.com" => "owner", "invoice_id" => 42}]], [

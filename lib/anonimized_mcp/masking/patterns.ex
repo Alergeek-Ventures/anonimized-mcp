@@ -3,7 +3,8 @@ defmodule AnonimizedMcp.Masking.Patterns do
   Finds personal data and credentials that have a fixed shape: e-mails,
   profile links, phone numbers, IBAN/NRB, payment cards, NIP and EU VAT
   numbers, PESEL, REGON, ID card and passport numbers, IP addresses,
-  password hashes, JWTs and long random tokens. Digit-based identifiers only
+  password hashes, JWTs and long random tokens; also street lines with a
+  `ul.`/`al.` prefix and lines naming health care. Digit-based identifiers only
   count when their checksum holds, so amounts, dates and record numbers stay
   readable.
   """
@@ -14,6 +15,16 @@ defmodule AnonimizedMcp.Masking.Patterns do
 
   # Earlier patterns win when matches overlap.
   @patterns [
+    # Health data is a special category: a line naming a clinic, a doctor or
+    # a therapy is masked whole, so payments and invoices do not reveal who
+    # was treated for what.
+    {"SENSITIVE",
+     ~r/[^\n]*\b(?:psychiatr|psycholog|psychoterap|terapi|terapeut|zdrowi[ae] psych|mental health|lekar|przychodni|szpital|klinik|clinic|hospital|poradni[aąeęiy]?\b|stomatolog|dentyst|dentist|ortodon|ginekolog|urolog|onkolog|kardiolog|dermatolog|neurolog|okulist|laryngolog|pediatr|fizjoterap|rehabilit|medycyn|medical|centrum medyczn|pharmac|aptek|medicover|lux ?med|enel-?med|nzoz|spzoz)[^\n]*/iu,
+     nil},
+    # Street lines named as such: ul. Długa 12/3, al. Jana Pawła II 5.
+    {"ADDRESS",
+     ~r/(?<!\p{L})(?:(?i:ul|al|os|pl)\.|(?i:ulica|aleja|osiedle|plac)\s)\s*\p{Lu}[\p{L}\-.' ]{1,40}?\s\d{1,4}[a-zA-Z]?(?:\s?\/\s?\d{1,4}[a-zA-Z]?)?(?![\p{N}-])/u,
+     nil},
     {"EMAIL", ~r/(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}(?![\w-])/u, nil},
     # Profile links name a person; other URLs stay readable.
     {"PROFILE",

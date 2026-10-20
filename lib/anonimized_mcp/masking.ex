@@ -10,20 +10,33 @@ defmodule AnonimizedMcp.Masking do
   declined forms of names, so a name the model caught once stays masked
   elsewhere.
 
-  Two column-name rules need no configuration: columns, composite fields and
+  Column-name rules need no configuration: columns, composite fields and
   JSON keys named like credentials are withheld, and dates in columns named
-  like birth dates are aliased. With the statement's lineage the rules also
+  like birth dates are aliased. In columns named like account numbers any
+  long digit run is aliased, valid checksum or not, and in columns named
+  like addresses so is every street line. With the statement's lineage the
+  credential and birth-date rules also
   cover columns derived from such columns under another label
   (`min(birth_date)`, `coalesce(otp_secret, '')`, `birth_date AS dob`):
   their text is withheld, their dates aliased, and their numbers, booleans
   and other dates kept, since counts and checks are what debugging needs.
   """
 
-  alias AnonimizedMcp.Masking.{Aliases, Lineage, Ner, Patterns}
+  alias AnonimizedMcp.Masking.{Aliases, FirstNames, Lineage, Ner, Patterns}
 
   @secret "[secret]"
   @secret_name ~r/password|passwd|secret|token|api_?key|private_key|credential|encryption_key|^iv$|_iv$|otp|signature|session_key|cookie/
   @birth_name ~r/birth/
+  @account_name ~r/iban|bban|nrb|account_number|account_no|bank_account|rachun/
+  @address_name ~r/(?<!email_)(?<!ip_)(?<!mac_)address|street|adres|ulica/
+
+  # In account columns any long digit run is an account number, also one
+  # whose checksum fails because of a typo or an extraction error.
+  @account_number ~r/(?<![\p{L}\p{N}])(?:[A-Z]{2} ?)?\d[\d \-]{8,}\d(?!\p{N})/u
+
+  # In address columns a word followed by a house number is a street line
+  # (Długa 12/3); postal codes start with digits and stay.
+  @street ~r/(?<![\p{L}\p{N}_])\p{L}[\p{L}\p{M}.'\- ]*\p{L}\.?\s+\d{1,4}[a-zA-Z]?(?:\s*\/\s*\d{1,4}[a-zA-Z]?)?(?![\p{N}-])/u
 
   # Record ids and timestamps are what debugging joins on; the model
   # sometimes takes them for account numbers.
@@ -74,6 +87,13 @@ defmodule AnonimizedMcp.Masking do
       for {rule, regex} <- [secret: @secret_name, birthdate: @birth_name],
           Enum.any?(lineage, &(&1 == Lineage.unknown() or named?(regex, &1))),
           do: rule
+
+    derived =
+      derived ++
+        for {rule, regex} <- [account: @account_name, address: @address_name],
+            named?(regex, name) or
+              Enum.any?(lineage, &(&1 != Lineage.unknown() and named?(regex, &1))),
+            do: rule
 
     cond do
       named?(@secret_name, name) -> :secret
@@ -209,7 +229,8 @@ defmodule AnonimizedMcp.Masking do
   defp derive({kind, value} = leaf, source, derived) when kind in [:text, :lexeme, :number] do
     cond do
       :secret in derived -> @secret
-      kind == :text -> birth_text(source, value)
+      kind == :text -> derive_text(source, value, derived)
+      kind == :number and :account in derived -> {:alias, "IBAN", Integer.to_string(value)}
       true -> leaf
     end
   end
@@ -219,6 +240,27 @@ defmodule AnonimizedMcp.Masking do
   end
 
   defp derive(value, _source, _derived), do: value
+
+  defp derive_text(source, text, derived) do
+    text =
+      for {rule, regex, type} <- [
+            {:account, @account_number, "IBAN"},
+            {:address, @street, "ADDRESS"}
+          ],
+          rule in derived,
+          reduce: text do
+        acc ->
+          Regex.replace(regex, acc, fn found ->
+            if rule == :account and digit_count(found) < 10,
+              do: found,
+              else: Aliases.alias_for(source, type, found)
+          end)
+      end
+
+    if :birthdate in derived, do: birth_text(source, text), else: {:text, text}
+  end
+
+  defp digit_count(text), do: text |> String.replace(~r/\D/, "") |> byte_size()
 
   defp birth_text(source, text) do
     if text =~ @date and text |> String.replace(@date, "") |> String.trim() == "",
@@ -256,8 +298,20 @@ defmodule AnonimizedMcp.Masking do
   end
 
   defp known_matchers(known) do
-    exact = for {canonical, alias, _} <- known, byte_size(canonical) >= 4, do: {canonical, alias}
+    # A one-word address is a place name, which stays readable elsewhere,
+    # and a lower-case word found once in a file name or slug is more often
+    # a common word elsewhere.
+    exact =
+      for {canonical, alias, type} <- known,
+          byte_size(canonical) >= 4,
+          not (type == "ADDRESS" and String.match?(canonical, ~r/^\p{L}+$/u)),
+          not String.match?(canonical, ~r/^\p{Ll}+$/u),
+          do: {canonical, alias}
+
     folded = Enum.group_by(exact, fn {canonical, _} -> String.downcase(canonical) end)
+
+    bounded =
+      for {canonical, _, "ADDRESS"} <- known, into: MapSet.new(), do: String.downcase(canonical)
 
     words =
       for {canonical, _, type} <- known,
@@ -282,6 +336,7 @@ defmodule AnonimizedMcp.Masking do
     %{
       exact: folded,
       cased: Map.new(exact),
+      bounded: bounded,
       matcher: if(folded != %{}, do: :binary.compile_pattern(Map.keys(folded))),
       cased_matcher: if(exact != [], do: :binary.compile_pattern(Map.keys(Map.new(exact)))),
       stem_set: MapSet.new(stems),
@@ -353,7 +408,7 @@ defmodule AnonimizedMcp.Masking do
 
     Enum.map(texts, fn text ->
       names = outside_record_ids(text, Map.get(names, text, []))
-      merge(Patterns.spans(text) ++ names)
+      merge(Patterns.spans(text) ++ names ++ FirstNames.spans(text))
     end)
   end
 
@@ -491,13 +546,29 @@ defmodule AnonimizedMcp.Masking do
           key = binary_part(folded, start, len),
           found = binary_part(text, start, len),
           String.downcase(found) == key,
+          whole_word?(masker, key, text, start, len),
           alias = pick(Map.fetch!(masker.exact, key), found, any_case?),
           alias != nil,
           do: {start, len, {:alias, alias}}
     else
       for {start, len} <- :binary.matches(text, masker.cased_matcher),
-          do: {start, len, {:alias, Map.fetch!(masker.cased, binary_part(text, start, len))}}
+          found = binary_part(text, start, len),
+          whole_word?(masker, String.downcase(found), text, start, len),
+          do: {start, len, {:alias, Map.fetch!(masker.cased, found)}}
     end
+  end
+
+  # Long names also match glued to other words, as bank transfers write
+  # them (JANKOWALSKI); short values and addresses only as whole words, so a
+  # known "Inka" or "San Francisco, Ca" leaves "INKASO" and "California"
+  # alone.
+  defp whole_word?(masker, key, text, start, len) do
+    (len >= 6 and key not in masker.bounded) or bounded?(text, start, len)
+  end
+
+  defp bounded?(text, start, len) do
+    not Regex.match?(~r/\p{L}\z/u, binary_part(text, 0, start)) and
+      not Regex.match?(~r/^\p{L}/u, binary_part(text, start + len, byte_size(text) - start - len))
   end
 
   # Lower-case forms of a known single word stay: they are more often a
