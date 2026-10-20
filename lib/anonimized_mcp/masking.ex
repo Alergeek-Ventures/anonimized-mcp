@@ -15,11 +15,11 @@ defmodule AnonimizedMcp.Masking do
   like birth dates are aliased. In columns named like account numbers any
   long digit run is aliased, valid checksum or not, and in columns named
   like addresses so is every street line. With the statement's lineage the
-  credential and birth-date rules also
-  cover columns derived from such columns under another label
-  (`min(birth_date)`, `coalesce(otp_secret, '')`, `birth_date AS dob`):
-  their text is withheld, their dates aliased, and their numbers, booleans
-  and other dates kept, since counts and checks are what debugging needs.
+  credential and birth-date rules also cover columns derived from such
+  columns under another label (`min(birth_date)`, `coalesce(otp_secret, '')`,
+  `birth_date AS dob`): their text is withheld, their dates aliased, and
+  their numbers, booleans and other dates kept, since counts and checks are
+  what debugging needs.
   """
 
   alias AnonimizedMcp.Masking.{Aliases, FirstNames, Lineage, Ner, Patterns}
@@ -82,25 +82,28 @@ defmodule AnonimizedMcp.Masking do
   @spec scrub(String.t(), String.t()) :: String.t()
   def scrub(source, text), do: source |> masker([text]) |> apply_masker({:text, text})
 
+  # A column whose lineage is unknown may hide a credential or a birth date;
+  # the account and address rules only follow lineage that names them.
   defp column_kind([name, type, lineage, field]) do
-    derived =
+    withheld =
       for {rule, regex} <- [secret: @secret_name, birthdate: @birth_name],
           Enum.any?(lineage, &(&1 == Lineage.unknown() or named?(regex, &1))),
           do: rule
 
-    derived =
-      derived ++
-        for {rule, regex} <- [account: @account_name, address: @address_name],
-            named?(regex, name) or
-              Enum.any?(lineage, &(&1 != Lineage.unknown() and named?(regex, &1))),
-            do: rule
+    aliased =
+      for {rule, regex} <- [account: @account_name, address: @address_name],
+          named?(regex, name) or
+            Enum.any?(lineage, &(&1 != Lineage.unknown() and named?(regex, &1))),
+          do: rule
+
+    rules = withheld ++ aliased
 
     cond do
       named?(@secret_name, name) -> :secret
       named?(@birth_name, name) -> :birthdate
       field == :uuid or match?({Postgrex.Extensions.UUID, _}, type) -> :uuid
       composite?(field) -> {:fields, field}
-      true -> {:plain, derived}
+      true -> {:plain, rules}
     end
   end
 
@@ -117,7 +120,7 @@ defmodule AnonimizedMcp.Masking do
   defp cell(_source, value, :uuid), do: uuid(value)
   defp cell(source, value, :birthdate), do: birth(source, value)
   defp cell(source, value, {:fields, field}), do: fields(source, value, field)
-  defp cell(source, value, {:plain, derived}), do: value |> leaf() |> derive(source, derived)
+  defp cell(source, value, {:plain, rules}), do: value |> leaf() |> apply_rules(source, rules)
 
   defp uuid(nil), do: nil
   defp uuid(list) when is_list(list), do: Enum.map(list, &uuid/1)
@@ -136,7 +139,7 @@ defmodule AnonimizedMcp.Masking do
   defp birth(source, tuple) when is_tuple(tuple), do: birth(source, Tuple.to_list(tuple))
 
   defp birth(source, %{} = map) when not is_struct(map),
-    do: map |> leaf() |> derive(source, [:birthdate])
+    do: map |> leaf() |> apply_rules(source, [:birthdate])
 
   defp birth(_source, value), do: {:alias, "BIRTHDATE", string(value)}
 
@@ -158,7 +161,7 @@ defmodule AnonimizedMcp.Masking do
   end
 
   defp fields(source, value, _field),
-    do: value |> leaf() |> derive(source, [:secret, :birthdate])
+    do: value |> leaf() |> apply_rules(source, [:secret, :birthdate])
 
   defp leaf(nil), do: nil
   defp leaf(list) when is_list(list), do: Enum.map(list, &leaf/1)
@@ -216,56 +219,51 @@ defmodule AnonimizedMcp.Masking do
       else: inspect(value)
   end
 
-  # Applies the credential and birth-date rules to a column that derives
-  # from such a column under another label.
-  defp derive(leaves, _source, []), do: leaves
+  # Applies the column-name rules found by `column_kind/1`.
+  defp apply_rules(leaves, _source, []), do: leaves
 
-  defp derive(list, source, derived) when is_list(list),
-    do: Enum.map(list, &derive(&1, source, derived))
+  defp apply_rules(list, source, rules) when is_list(list),
+    do: Enum.map(list, &apply_rules(&1, source, rules))
 
-  defp derive({:map, pairs}, source, derived),
-    do: {:map, Enum.map(pairs, fn {key, value} -> {key, derive(value, source, derived)} end)}
+  defp apply_rules({:map, pairs}, source, rules),
+    do: {:map, Enum.map(pairs, fn {key, value} -> {key, apply_rules(value, source, rules)} end)}
 
-  defp derive({kind, value} = leaf, source, derived) when kind in [:text, :lexeme, :number] do
+  defp apply_rules({kind, value} = leaf, source, rules) when kind in [:text, :lexeme, :number] do
     cond do
-      :secret in derived -> @secret
-      kind == :text -> derive_text(source, value, derived)
-      kind == :number and :account in derived -> {:alias, "IBAN", Integer.to_string(value)}
+      :secret in rules -> @secret
+      kind == :text -> rules_text(source, value, rules)
+      kind == :number and :account in rules -> {:alias, "IBAN", Integer.to_string(value)}
       true -> leaf
     end
   end
 
-  defp derive(%mod{} = date, _source, derived) when mod in @dates do
-    if :birthdate in derived, do: {:alias, "BIRTHDATE", to_string(date)}, else: date
+  defp apply_rules(%mod{} = date, _source, rules) when mod in @dates do
+    if :birthdate in rules, do: {:alias, "BIRTHDATE", to_string(date)}, else: date
   end
 
-  defp derive(value, _source, _derived), do: value
+  defp apply_rules(value, _source, _rules), do: value
 
-  defp derive_text(source, text, derived) do
-    text =
-      for {rule, regex, type} <- [
-            {:account, @account_number, "IBAN"},
-            {:address, @street, "ADDRESS"}
-          ],
-          rule in derived,
-          reduce: text do
-        acc ->
-          Regex.replace(regex, acc, fn found ->
-            if rule == :account and digit_count(found) < 10,
-              do: found,
-              else: Aliases.alias_for(source, type, found)
-          end)
-      end
-
-    if :birthdate in derived, do: birth_text(source, text), else: {:text, text}
+  defp rules_text(source, text, rules) do
+    text = if :account in rules, do: account_text(source, text), else: text
+    text = if :address in rules, do: alias_all(source, text, @street, "ADDRESS"), else: text
+    if :birthdate in rules, do: birth_text(source, text), else: {:text, text}
   end
 
-  defp digit_count(text), do: text |> String.replace(~r/\D/, "") |> byte_size()
+  defp account_text(source, text) do
+    Regex.replace(@account_number, text, fn found ->
+      if found |> String.replace(~r/\D/, "") |> byte_size() >= 10,
+        do: Aliases.alias_for(source, "IBAN", found),
+        else: found
+    end)
+  end
+
+  defp alias_all(source, text, regex, type),
+    do: Regex.replace(regex, text, &Aliases.alias_for(source, type, &1))
 
   defp birth_text(source, text) do
     if text =~ @date and text |> String.replace(@date, "") |> String.trim() == "",
       do: {:alias, "BIRTHDATE", text},
-      else: {:text, Regex.replace(@date, text, &Aliases.alias_for(source, "BIRTHDATE", &1))}
+      else: {:text, alias_all(source, text, @date, "BIRTHDATE")}
   end
 
   defp named?(regex, name),

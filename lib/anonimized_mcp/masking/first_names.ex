@@ -1,16 +1,18 @@
 defmodule AnonimizedMcp.Masking.FirstNames do
   @moduledoc """
-  Finds the first names the model misses: lower-case names glued into file
-  names and branch slugs (`invoice_<name>_<surname>.pdf`, `<name>/abc-12-fix`)
-  and declined or diminutive forms in prose ("z Tomkiem"). In a file name
-  the word joined right after a first name is taken for the surname.
+  Finds the first names the model misses: capitalised names and their
+  declined or diminutive forms in prose ("z Tomkiem"), and lower-case names
+  glued into file names and branch slugs (`invoice_<name>_<surname>.pdf`,
+  `<name>/abc-12-fix`). In a file name the word joined right after a first
+  name is taken for the surname.
 
   The names are the first names of living people in the PESEL registry borne
   by at least 100 people
   ([dane.gov.pl, dataset 1667](https://dane.gov.pl/pl/dataset/1667), CC0,
   as of 2026-01-20), plus common diminutives below that count. Lower-case
-  words only count where they are glued with `_`, `-`, `/`, `.` or `\\` or
-  make up the whole value, so prose such as "różnych marek" stays readable.
+  words only count where they are glued with `_`, `-`, `/`, `.` or `\\`,
+  make up the whole value or are declined after a preposition, so prose such
+  as "różnych marek" stays readable; upper-case ones need four letters.
   """
 
   @external_resource path = Path.expand("../../../priv/masking/first_names.txt", __DIR__)
@@ -69,9 +71,11 @@ defmodule AnonimizedMcp.Masking.FirstNames do
   end
 
   defp first_name?(text, start, len, word) do
-    name?(String.downcase(word)) and
+    lower = String.downcase(word)
+
+    name?(lower) and
       cond do
-        String.downcase(word) == word ->
+        lower == word ->
           glued?(text, start, len) or (start == 0 and len == byte_size(text)) or
             (declined?(word) and after_preposition?(text, start))
 
