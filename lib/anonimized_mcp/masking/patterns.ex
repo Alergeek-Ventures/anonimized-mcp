@@ -33,6 +33,8 @@ defmodule AnonimizedMcp.Masking.Patterns do
     {"PHONE", ~r/(?<![\w+])\+\d{1,3}(?:[ .-]?\(?\d{1,4}\)?){2,6}(?!\w)/, :phone_digits},
     {"PHONE", ~r/(?<!\w)(?:\+\d{2} ?)?(?:\(?\d{3}\)?[ -]?\d{3}[ -]?\d{3,4})(?:x\d+)?(?!\w)/, nil},
     {"PHONE", ~r/(?<![\w-])\d{2,3}[ -]\d{2,3}[ -]\d{2}[ -]\d{2}(?![\w-])/, nil},
+    # Polish landlines with the area code in brackets: (22) 123 45 67.
+    {"PHONE", ~r/\(\d{2}\) ?\d{3}[ -]?\d{2}[ -]?\d{2}(?![\w-])/, nil},
     # Random tokens mix cases and digits; single-case runs are mostly hashes,
     # module names and ids that debugging needs. UUIDs are record ids too.
     {:secret,

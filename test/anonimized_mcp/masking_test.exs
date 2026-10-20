@@ -35,7 +35,9 @@ defmodule AnonimizedMcp.MaskingTest do
           "+1 (555) 123-4567",
           "+420 12 345 67 89",
           "+48600123456",
-          "60 123-45-67"
+          "60 123-45-67",
+          "(22) 123 45 67",
+          "(22) 123-45-67"
         ] do
       assert [{0, len, type}] = Patterns.spans(text), text
       assert len == byte_size(String.trim_trailing(text, "/")) or len == byte_size(text), text
