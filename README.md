@@ -121,6 +121,7 @@ app's server. It reads its configuration from the environment:
 | Variable | |
 |---|---|
 | `PHX_URL` | public URL, e.g. `https://app-mcp.example.com`; OAuth and the Google callback derive from it |
+| `PORT` | optional listening port, defaults to `4000`; the container healthcheck uses the same port |
 | `DATABASE_URL` | the gateway's own database (operators, OAuth clients, leak reports) |
 | `SECRET_KEY_BASE` | `mix phx.gen.secret`; also keys the aliases, so keep it stable |
 | `TOKEN_SIGNING_SECRET`, `OAUTH2_SIGNING_SECRET` | `mix phx.gen.secret` each |

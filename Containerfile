@@ -66,6 +66,6 @@ USER nobody
 
 # The endpoint starts only after the model has loaded.
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=60s \
-  CMD curl --fail --silent --show-error --output /dev/null http://127.0.0.1:4000/ || exit 1
+  CMD curl --fail --silent --show-error --output /dev/null "http://127.0.0.1:${PORT:-4000}/" || exit 1
 
 CMD ["sh", "-c", "/app/bin/migrate && exec /app/bin/server"]
