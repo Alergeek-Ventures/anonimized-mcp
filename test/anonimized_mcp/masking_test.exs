@@ -439,6 +439,25 @@ defmodule AnonimizedMcp.MaskingTest do
     assert note =~ ~r/^Dla NAME_[a-z2-7]{8}, pilne$/
   end
 
+  test "keeps worker and exception names and short lower-case codes readable" do
+    source = "technical-#{System.unique_integer([:positive])}"
+
+    for name <- ~w(Workers SyncWorker Postgrex Kowalski McDonald),
+        do: Aliases.alias_for(source, "NAME", name)
+
+    error =
+      "** (Oban.PerformError) MyApp.Billing.Workers.SyncWorker failed with %Postgrex.Error{}"
+
+    texts = ["zal", "roz", "MyApp.Billing.Workers.SyncWorker", error]
+
+    assert [^texts] = Masking.mask(source, ~w(a b c d), List.duplicate(@text, 4), [texts])
+
+    for name <- ~w(ewa jan ala Jan.Kowalski.PDF McDonald.Smith) do
+      assert [[masked]] = Masking.mask(source, ["name"], [@text], [[name]])
+      assert masked =~ ~r/NAME_[a-z2-7]{8}/
+    end
+  end
+
   test "masks personal data in JSON keys and keeps ordinary keys" do
     assert [[prefs]] =
              mask(["prefs"], [[%{"jan.kowalski@example.com" => "owner", "invoice_id" => 42}]], [
