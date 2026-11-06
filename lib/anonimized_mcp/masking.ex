@@ -42,6 +42,12 @@ defmodule AnonimizedMcp.Masking do
   # sometimes takes them for account numbers.
   @record_id ~r/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)?/i
 
+  # Names of job workers and exceptions (MyApp.Billing.SyncWorker,
+  # Oban.PerformError, Postgrex.Error), whose words the model takes for names
+  # and companies.
+  # Only the suffix tells them from dotted names (Jan.Kowalski.PDF).
+  @module_path ~r/(?<![\p{L}\p{N}_.])(?:[A-Z][A-Za-z0-9_]+\.)+(?:[A-Z][A-Za-z0-9_]*)?(?:Worker|Job|Error|Exception)(?![\p{L}\p{N}_])/
+
   # Dates written out in text, as derived birth dates arrive after a cast.
   @date ~r/(?<!\d)(?:\d{4}[-.\/]\d{1,2}[-.\/]\d{1,2}|\d{1,2}[-.\/]\d{1,2}[-.\/]\d{4})(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}(?::?\d{2})?)?)?(?!\d)/
   @dates [Date, NaiveDateTime, DateTime]
@@ -373,13 +379,7 @@ defmodule AnonimizedMcp.Masking do
   """
   @spec spans([String.t()]) :: [[{non_neg_integer(), pos_integer(), String.t() | :secret}]]
   def spans(texts) do
-    # A lone word of up to three capitals is a code (ZAR, HUF, PL), which the
-    # model can take for a name or company; patterns still look at it.
-    prose =
-      Enum.filter(
-        texts,
-        &(String.match?(&1, ~r/\p{L}/u) and not String.match?(&1, ~r/^\s*\p{Lu}{1,3}\s*$/u))
-      )
+    prose = Enum.filter(texts, &(String.match?(&1, ~r/\p{L}/u) and not code?(&1)))
 
     model = Enum.map(prose, &model_case/1)
 
@@ -405,9 +405,18 @@ defmodule AnonimizedMcp.Masking do
       end)
 
     Enum.map(texts, fn text ->
-      names = outside_record_ids(text, Map.get(names, text, []))
+      names = outside_technical(text, Map.get(names, text, []))
       merge(Patterns.spans(text) ++ names ++ FirstNames.spans(text))
     end)
+  end
+
+  # A lone word of up to three capitals or lower-case letters is a code
+  # (ZAR, PL, vat), which the model can take for a name or company; patterns
+  # still look at it. Lower-case first names (jan, ala) are left to the model.
+  defp code?(text) do
+    String.match?(text, ~r/^\s*\p{Lu}{1,3}\s*$/u) or
+      (String.match?(text, ~r/^\s*\p{Ll}{1,3}\s*$/u) and
+         not FirstNames.registered?(String.trim(text)))
   end
 
   # The model relies on capitals, so text written in capitals only
@@ -461,8 +470,13 @@ defmodule AnonimizedMcp.Masking do
     |> Enum.sort()
   end
 
-  defp outside_record_ids(text, spans) do
-    protected = Regex.scan(@record_id, text, return: :index) |> Enum.map(&hd/1)
+  defp outside_technical(text, spans) do
+    protected =
+      Enum.map(
+        Regex.scan(@record_id, text, return: :index) ++
+          Regex.scan(@module_path, text, return: :index),
+        &hd/1
+      )
 
     Enum.reject(spans, fn {s, l, _} ->
       Enum.any?(protected, fn {ps, pl} -> s >= ps and s + l <= ps + pl end)
@@ -498,7 +512,8 @@ defmodule AnonimizedMcp.Masking do
   defp apply_masker(_masker, value), do: value
 
   defp replace(masker, text, any_case?) do
-    (Map.fetch!(masker.detected, text) ++ known_spans(masker, text, any_case?))
+    (Map.fetch!(masker.detected, text) ++
+       outside_technical(text, known_spans(masker, text, any_case?)))
     |> non_overlapping()
     |> Enum.sort(:desc)
     |> Enum.reduce(text, fn {start, len, type}, acc ->

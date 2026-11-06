@@ -53,6 +53,13 @@ defmodule AnonimizedMcp.Masking.FirstNames do
 
   @type span :: {start :: non_neg_integer(), length :: pos_integer(), String.t()}
 
+  @doc """
+  Tells whether `word` is a first name in the registry, also one of those
+  that are mostly something else.
+  """
+  @spec registered?(String.t()) :: boolean()
+  def registered?(word), do: String.downcase(word) in @names
+
   @doc "Returns the spans of first names and surnames next to them in `text`."
   @spec spans(String.t()) :: [span()]
   def spans(text) do

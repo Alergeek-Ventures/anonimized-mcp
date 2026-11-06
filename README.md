@@ -48,7 +48,11 @@ and `EXPLAIN` refuses aliases, since a plan prints bound values.
    NER model, run in-process on CPU through ONNX Runtime. Words written in
    capitals are also shown to the model title-cased. Addresses, tsvector
    lexemes, large numerics and JSON keys are checked like text. UUIDs and
-   timestamps are never masked.
+   timestamps are never masked. Worker and exception names
+   (`MyApp.Billing.SyncWorker`, `Oban.PerformError`) skip the model and the
+   known values of step 3, and lone codes of up to three letters (`PL`,
+   `vat`, but not a lower-case first name) skip the model; patterns still
+   apply.
 3. Values aliased so far in the source are replaced wherever else they
    appear, in any letter case and also by name stem, so a name found once
    stays masked in declined forms elsewhere.
